@@ -43,11 +43,18 @@ models very welcome — open an issue.
    original PHN16-73 capture all along and shipped the fix in
    **v0.2.27-preview**. Whether 100 = full also holds on the PHN16-73 EC
    remains unconfirmed until someone tests that machine.
-2. **Zone mask `0x0f` ("all zones") misbehaves** — output is dim/incorrect.
-   Individual masks `0x01/0x02/0x04/0x08` (one write per zone) work exactly
-   as expected, including four different colors simultaneously.
-   predator-sense already wrote zones individually and removed its unused
-   `ZONE_ALL` constant after this report.
+2. **Correction (2026-07-12): zone mask `0x0f` works.** An earlier version
+   of this document claimed the all-zones mask produced dim/incorrect
+   output. That was a test artifact: the original experiment sent the
+   `0x0f` packet with brightness byte 15, before the 0-100 range was
+   understood, so the "broken mask" was really just 15% brightness. An
+   independent probe on a second PHN16S-71 (kbrgb issue #1) showed `0x0f`
+   working at brightness 100, and a retest on the original machine
+   confirmed it. `0x0f` sets all four zones in one write and is safe.
+   Individual masks `0x01/0x02/0x04/0x08` also work as documented,
+   including four different colors simultaneously. (predator-sense removed
+   its unused `ZONE_ALL` constant based on the earlier claim; a correction
+   has been posted there.)
 3. **No transitions, no persistence.** Writes apply instantly (no EC-side
    fade). The controller loses all state on full power-off and boots into
    its built-in color wave. Reapply on boot (see `examples/omarchy/`).

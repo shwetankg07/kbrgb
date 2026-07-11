@@ -59,12 +59,15 @@ when available, with built-in fallbacks otherwise.
 """
 import fcntl, glob, math, os, random, re, signal, sys, time
 
-# NOTE (verified on this PHN16S-71 by direct testing, 2026-07-11):
-# - brightness byte range is 0-100, NOT 1-15 as predator-sense assumes
-# - the "all zones" mask 0x0f produces dim/wrong output; always write
-#   the four zone masks individually
+# NOTE (verified on PHN16S-71 hardware, two machines):
+# - brightness byte range is 0-100 (predator-sense shipped the same fix
+#   in v0.2.27 after our report)
+# - mask 0x0f writes all four zones at once and works fine; an earlier
+#   "0x0f is broken" claim was a test artifact (packet sent at brightness
+#   15 before the 0-100 range was understood)
 HIDIOCSFEATURE_11 = 0xC00B4806
 ZONES = [0x01, 0x02, 0x04, 0x08]
+ZONE_ALL = 0x0F
 THEME = os.path.expanduser("~/.config/omarchy/current/theme")
 STATE = os.path.expanduser("~/.local/state/kbrgb/last")
 PIDFILE = os.path.expanduser("~/.local/state/kbrgb/fx.pid")
@@ -600,8 +603,12 @@ def run_effect(effect, colors, period, bright):
                     raise OSError("device absent")
                 dev = open(path, "rb+", buffering=0)
             zones = fn(time.monotonic() - t0, period, colors, st)
-            for mask, (r, g, b) in zip(ZONES, zones):
-                send(dev.fileno(), mask, r, g, b, bmax)
+            if zones.count(zones[0]) == 4:
+                # uniform frame: one 0x0f write instead of four
+                send(dev.fileno(), ZONE_ALL, *zones[0], bmax)
+            else:
+                for mask, (r, g, b) in zip(ZONES, zones):
+                    send(dev.fileno(), mask, r, g, b, bmax)
             time.sleep(dt)
         except OSError:
             # device blipped (suspend/resume, i2c reset) — reopen and go on
@@ -848,8 +855,11 @@ def main():
     stop_fx()
     bri = max(1, min(100, brightness))
     with open_dev() as f:
-        for mask, (r, g, b) in zip(ZONES, colors):
-            send(f.fileno(), mask, r, g, b, bri)
+        if colors.count(colors[0]) == 4:
+            send(f.fileno(), ZONE_ALL, *colors[0], bri)
+        else:
+            for mask, (r, g, b) in zip(ZONES, colors):
+                send(f.fileno(), mask, r, g, b, bri)
     save()
 
 

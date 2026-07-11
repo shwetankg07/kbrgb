@@ -41,8 +41,10 @@ userspace Python and adds a software animation engine on top.
 1. The brightness byte range is **0–100** on this EC revision, not 1–15 as
    previously assumed — tools using 15 as max run the LEDs at 15% brightness
    (reported upstream and fixed in predator-sense v0.2.27-preview).
-2. The "all zones" mask `0x0f` produces dim/incorrect output on this EC —
-   zones must be written individually (`0x01`, `0x02`, `0x04`, `0x08`).
+2. ~~The all-zones mask `0x0f` misbehaves~~ **Correction:** `0x0f` works
+   fine — the original claim was a test artifact (packet sent at
+   brightness 15), caught by an independent probe report in issue #1.
+   Details in PROTOCOL.md.
 3. The controller has no persistent memory: it resets to its built-in wave
    effect on full power-off (hence the boot-restore hook).
 
