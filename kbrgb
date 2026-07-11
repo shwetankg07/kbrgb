@@ -10,6 +10,7 @@ Usage:
   kbrgb theme                   paint zones from the current omarchy theme
   kbrgb off                     all zones dark (also stops any effect)
   kbrgb restore                 reapply last setting (controller forgets on power-off)
+  kbrgb <preset name>           run a preset from presets.conf (case insensitive)
 
 Effects (animated, run until replaced):
   kbrgb breathe [C]             breathing fade in/out
@@ -625,6 +626,22 @@ def theme_or_default():
         return FALLBACK_COLORS
 
 
+def preset_args(name):
+    """Look up a preset by (case-insensitive) name, return its args or None."""
+    conf = os.path.expanduser("~/.config/kbrgb/presets.conf")
+    try:
+        lines = open(conf).read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if "=" not in line or line.lstrip().startswith("#"):
+            continue
+        k, v = line.split("=", 1)
+        if k.strip().lower() == name.lower():
+            return v.split()
+    return None
+
+
 def cmd_status():
     path = find_dev()
     print(f"device:  {path or 'NOT FOUND'}")
@@ -755,7 +772,7 @@ def main():
 
     brightness, period = 100, None
     for flag in ("-b", "-s"):
-        if flag in args:
+        while flag in args:  # last occurrence wins (preset + user override)
             i = args.index(flag)
             try:
                 val = float(args[i + 1])
@@ -813,12 +830,20 @@ def main():
         brightness = 1
     elif args == ["theme"]:
         colors = theme_colors()
-    elif len(args) == 1:
+    elif len(args) == 1 and is_hexish(args[0]):
         colors = [parse_hex(args[0])] * 4
-    elif len(args) == 4:
+    elif len(args) == 4 and all(is_hexish(a) for a in args):
         colors = [parse_hex(a) for a in args]
     else:
-        die("give colors, 'theme', an effect, or 'off' (see --help)")
+        # not a color or effect: try it as a preset name ("thunderstorm")
+        pargs = preset_args(" ".join(args))
+        if pargs is None:
+            die("give colors, 'theme', an effect, a preset name, or 'off' "
+                "(see --help)")
+        extra = (["-b", str(brightness)] if brightness != 100 else []) \
+            + (["-s", str(period)] if period else [])
+        sys.argv = [sys.argv[0]] + pargs + extra
+        return main()
 
     stop_fx()
     bri = max(1, min(100, brightness))
