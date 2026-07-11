@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs after every `omarchy theme set` — repaint keyboard zones only if the
+# last-applied kbrgb setting was Theme Sync, so manual presets stick.
+if grep -q 'theme$' "$HOME/.local/state/kbrgb/last" 2>/dev/null; then
+  "$HOME/.local/bin/kbrgb" theme || true
+fi

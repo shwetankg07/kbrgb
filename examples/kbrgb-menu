@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Walker picker for kbrgb presets (SUPER+SHIFT+K).
+set -uo pipefail
+
+KBRGB="$HOME/.local/bin/kbrgb"
+CONF="$HOME/.config/kbrgb/presets.conf"
+
+mapfile -t names < <(grep -E '^[^#=]+=' "$CONF" | sed 's/ *=.*//')
+choice=$(printf '%s\n' "${names[@]}" | walker --dmenu --width 295 --minheight 1 --maxheight 630 -p "Keyboard RGB…") || exit 0
+[[ -z "$choice" ]] && exit 0
+
+args=$(awk -F' *= *' -v n="$choice" '$1 == n { print $2; exit }' "$CONF")
+[[ -z "$args" ]] && exit 1
+
+# shellcheck disable=SC2086
+if out=$("$KBRGB" $args 2>&1); then
+  notify-send -t 2000 "Keyboard RGB" "$choice"
+else
+  notify-send -u critical "Keyboard RGB failed" "${out:-unknown error}"
+fi

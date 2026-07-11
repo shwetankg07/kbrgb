@@ -1,0 +1,4 @@
+#!/bin/bash
+# The ENEK5130 keyboard controller forgets its state on full power-off and
+# boots into the EC default wave — reapply the last kbrgb setting.
+"$HOME/.local/bin/kbrgb" restore 2>/dev/null || true

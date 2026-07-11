@@ -1,0 +1,15 @@
+# Reapply the last kbrgb setting at login (the controller forgets on
+# power-off and boots into its built-in wave).
+#
+# Install:  cp kbrgb-restore.service ~/.config/systemd/user/
+#           systemctl --user daemon-reload
+#           systemctl --user enable kbrgb-restore
+[Unit]
+Description=Restore keyboard RGB state
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kbrgb restore
+
+[Install]
+WantedBy=default.target

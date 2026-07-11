@@ -1,0 +1,832 @@
+#!/usr/bin/env python3
+"""kbrgb — control the Predator PHN16S-71 4-zone keyboard RGB (ENEK5130 i2c-HID).
+
+Protocol credit: cleyton1986/predator-sense (hid_rgb.rs) and the
+Linuwu-Sense community research it builds on.
+
+Usage:
+  kbrgb RRGGBB                  one static color, all zones
+  kbrgb C1 C2 C3 C4             one static color per zone (left to right)
+  kbrgb theme                   paint zones from the current omarchy theme
+  kbrgb off                     all zones dark (also stops any effect)
+  kbrgb restore                 reapply last setting (controller forgets on power-off)
+
+Effects (animated, run until replaced):
+  kbrgb breathe [C]             breathing fade in/out
+  kbrgb rainbow                 all zones cycle the color wheel together
+  kbrgb wave                    moving rainbow across the zones
+  kbrgb snake [C]               scanner: bright head ping-pongs, tail fades
+  kbrgb meteor [C]              comet sweeping one way with wrap-around tail
+  kbrgb police [C1 C2]          alternating zone strobe (default red/blue)
+  kbrgb sparkle [C...]          random zones twinkle and fade (default theme)
+  kbrgb fire                    flickering embers
+  kbrgb heartbeat [C]           double-pulse rhythm
+  kbrgb aurora                  slow northern-lights hue drift
+  kbrgb ocean                   rolling blue swells across zones
+  kbrgb lava                    slow oozing magma
+  kbrgb matrix                  green digital rain
+  kbrgb candle                  cozy warm flicker
+  kbrgb storm                   dark night sky with lightning strikes
+  kbrgb disco                   beat-cut random zones and colors
+  kbrgb duel [C1 C2]            two comets bouncing from opposite ends
+  kbrgb shadow [C]              lit field with a roaming dark gap
+  kbrgb ripple [C]              breathing that flows zone to zone
+  kbrgb chase [C]               hard marquee: one zone at a time
+  kbrgb strobe [C]              party strobe (use responsibly)
+  kbrgb cpuheat                 zones show CPU temp: green=cool red=hot
+  kbrgb battery                 4-zone battery bar, breathes while charging
+  kbrgb prism                   flowing ripple that shifts hue every sweep
+  kbrgb glitch [C]              stable color with cyberpunk malfunction bursts
+  kbrgb eruption                smoldering volcano with violent eruptions
+  kbrgb redalert [C]            klaxon ramp-and-cut alarm sweep
+  kbrgb supernova               slow charge-up, explosion, fading embers
+  kbrgb shockwave [C]           fast bright front slams across, then silence
+
+Flags:
+  -b N    brightness percent 0-100 (default 100)
+  -s N    effect cycle period in seconds (default per effect)
+
+Tools:
+  kbrgb list                    list every effect name
+  kbrgb demo                    tour all effects, ~4s each (Ctrl-C stops)
+  kbrgb probe                   guided hardware diagnostic — run this to
+                                report support for a new laptop model
+  kbrgb status                  show device, saved state, daemon state
+
+Colors are RRGGBB hex. Effect defaults come from the active omarchy theme
+when available, with built-in fallbacks otherwise.
+"""
+import fcntl, glob, math, os, random, re, signal, sys, time
+
+# NOTE (verified on this PHN16S-71 by direct testing, 2026-07-11):
+# - brightness byte range is 0-100, NOT 1-15 as predator-sense assumes
+# - the "all zones" mask 0x0f produces dim/wrong output; always write
+#   the four zone masks individually
+HIDIOCSFEATURE_11 = 0xC00B4806
+ZONES = [0x01, 0x02, 0x04, 0x08]
+THEME = os.path.expanduser("~/.config/omarchy/current/theme")
+STATE = os.path.expanduser("~/.local/state/kbrgb/last")
+PIDFILE = os.path.expanduser("~/.local/state/kbrgb/fx.pid")
+
+# effect: (default period sec, max color args, frame interval sec)
+EFFECTS = {
+    "breathe":   (3.0, 1, 0.06),
+    "rainbow":   (8.0, 0, 0.06),
+    "wave":      (4.0, 0, 0.08),
+    "snake":     (2.2, 1, 0.05),
+    "meteor":    (1.8, 1, 0.05),
+    "police":    (0.9, 2, 0.05),
+    "sparkle":   (1.0, 4, 0.09),
+    "fire":      (1.0, 0, 0.09),
+    "heartbeat": (1.6, 1, 0.04),
+    "aurora":    (20.0, 0, 0.10),
+    "ocean":     (5.0, 0, 0.08),
+    "lava":      (1.0, 0, 0.12),
+    "matrix":    (1.0, 0, 0.08),
+    "candle":    (1.0, 0, 0.12),
+    "storm":     (1.0, 0, 0.06),
+    "disco":     (0.5, 0, 0.05),
+    "duel":      (2.6, 2, 0.05),
+    "shadow":    (2.4, 1, 0.05),
+    "ripple":    (3.5, 1, 0.06),
+    "chase":     (1.2, 1, 0.05),
+    "strobe":    (0.3, 1, 0.04),
+    "cpuheat":   (4.0, 0, 0.15),
+    "battery":   (6.0, 0, 0.15),
+    "prism":     (3.0, 0, 0.06),
+    "glitch":    (1.0, 1, 0.05),
+    "eruption":  (1.0, 0, 0.07),
+    "redalert":  (1.6, 1, 0.05),
+    "supernova": (6.0, 0, 0.05),
+    "shockwave": (2.5, 1, 0.04),
+}
+
+DEFAULT_COLORS = {
+    "police":    [(255, 0, 0), (0, 51, 255)],
+    "duel":      [(255, 42, 42), (0, 234, 255)],
+    "strobe":    [(255, 255, 255)],
+    "redalert":  [(255, 0, 0)],
+    "shockwave": [(0, 234, 255)],
+}
+
+
+def die(msg):
+    sys.exit(f"kbrgb: {msg}")
+
+
+def find_dev():
+    for p in glob.glob("/sys/class/hidraw/hidraw*"):
+        try:
+            if "ENEK5130" in open(p + "/device/uevent").read():
+                return "/dev/" + os.path.basename(p)
+        except OSError:
+            pass
+    return None
+
+
+def open_dev():
+    dev = find_dev()
+    if dev is None:
+        die("ENEK5130 keyboard controller not found "
+            "(check: grep -l ENEK5130 /sys/class/hidraw/*/device/uevent)")
+    try:
+        return open(dev, "rb+", buffering=0)
+    except PermissionError:
+        die(f"no access to {dev} — udev rule missing? (or run with sudo)")
+
+
+def send(fd, mask, r, g, b, bri=100):
+    pkt = bytearray([0xA4, 0x21, 0x02, bri, 0, 0, r, g, b, mask, 0])
+    fcntl.ioctl(fd, HIDIOCSFEATURE_11, pkt)
+
+
+def parse_hex(s):
+    s = s.lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", s):
+        die(f"bad color {s!r} (want RRGGBB)")
+    return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def is_hexish(s):
+    return re.fullmatch(r"#?[0-9a-fA-F]{6}", s) is not None
+
+
+def hsv(h, s=1.0, v=1.0):
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
+    return int(r * 255), int(g * 255), int(b * 255)
+
+
+def dim(rgb, f):
+    f = max(0.0, min(1.0, f))
+    return tuple(int(c * f) for c in rgb)
+
+
+def is_colorful(rgb):
+    return max(rgb) - min(rgb) >= 40
+
+
+def theme_colors():
+    """Pick 4 accent colors from the active omarchy theme."""
+    order = ["accent", "color4", "color1", "color5", "color2", "color3",
+             "color6", "color9", "color10", "color11", "color12", "color13"]
+    toml_path = os.path.join(THEME, "colors.toml")
+    alac_path = os.path.join(THEME, "alacritty.toml")
+    raw = {}
+    if os.path.exists(toml_path):
+        import tomllib
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+        raw = {k: v for k, v in data.items() if isinstance(v, str)}
+    elif os.path.exists(alac_path):
+        txt = open(alac_path).read()
+        for i, key in enumerate(["blue", "red", "magenta", "green",
+                                 "yellow", "cyan"], start=1):
+            m = re.search(rf'^{key}\s*=\s*["\']#?([0-9a-fA-F]{{6}})',
+                          txt, re.M)
+            if m:
+                raw[f"color{i}"] = m.group(1)
+        order = [f"color{i}" for i in range(1, 7)]
+    else:
+        die(f"no colors.toml or alacritty.toml in {THEME}")
+
+    def add():
+        for k in order:
+            v = raw.get(k, "").lstrip("#")
+            if re.fullmatch(r"[0-9a-fA-F]{6}", v or ""):
+                yield parse_hex(v)
+
+    found = []
+    for c in add():
+        if is_colorful(c) and c not in found:
+            found.append(c)
+    if len(found) < 4:
+        for c in add():
+            if c not in found:
+                found.append(c)
+    if not found:
+        die("no usable colors in theme")
+    while len(found) < 4:
+        found.append(found[-1])
+    return found[:4]
+
+
+def stop_fx():
+    try:
+        pid = int(open(PIDFILE).read())
+        # only kill if that pid is actually a kbrgb process (stale-pid safety)
+        if b"kbrgb" in open(f"/proc/{pid}/cmdline", "rb").read():
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.05)
+    except (OSError, ValueError):
+        pass
+    try:
+        os.remove(PIDFILE)
+    except OSError:
+        pass
+
+
+def daemonize():
+    if os.fork() > 0:
+        os._exit(0)
+    os.setsid()
+    if os.fork() > 0:
+        os._exit(0)
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    os.makedirs(os.path.dirname(PIDFILE), exist_ok=True)
+    with open(PIDFILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+# ---------------------------------------------------------------- effects
+
+def fx_breathe(t, p, cols, st):
+    f = (1 - math.cos(2 * math.pi * t / p)) / 2
+    return [dim(cols[0], f)] * 4
+
+
+def fx_rainbow(t, p, cols, st):
+    return [hsv(t / p)] * 4
+
+
+def fx_wave(t, p, cols, st):
+    return [hsv(t / p + i / 4) for i in range(4)]
+
+
+def fx_snake(t, p, cols, st):
+    """Bright head ping-pongs across zones, dimming tail behind it."""
+    x = (2 * t / p) % 2.0
+    pos = 3 * x if x < 1 else 3 * (2 - x)
+    out = []
+    for i in range(4):
+        inten = max(0.0, 1.0 - abs(i - pos)) ** 1.6
+        out.append(dim(cols[0], inten))
+    return out
+
+
+def fx_meteor(t, p, cols, st):
+    """Comet moving one direction, tail wraps around."""
+    pos = (4 * t / p) % 4.0
+    out = []
+    for i in range(4):
+        dist = (pos - i) % 4.0
+        out.append(dim(cols[0], max(0.0, 1.0 - dist / 2.6) ** 1.4))
+    return out
+
+
+def fx_police(t, p, cols, st):
+    """Zones 1+3 flash color A, zones 2+4 flash color B, alternating."""
+    a = cols[0] if cols else (255, 0, 0)
+    b = cols[1] if len(cols) > 1 else (0, 51, 255)
+    ph = int((2 * t / p) % 2)
+    off = (0, 0, 0)
+    return [a if ph == 0 else off, off if ph == 0 else b,
+            a if ph == 0 else off, off if ph == 0 else b]
+
+
+def fx_sparkle(t, p, cols, st):
+    """Random zones ignite and fade; others stay dark."""
+    lev = st.setdefault("lev", [0.0] * 4)
+    col = st.setdefault("col", [cols[0]] * 4)
+    for i in range(4):
+        lev[i] *= 0.80
+    if random.random() < 0.35:
+        i = random.randrange(4)
+        lev[i] = 1.0
+        col[i] = random.choice(cols)
+    return [dim(col[i], lev[i]) for i in range(4)]
+
+
+def fx_fire(t, p, cols, st):
+    """Flickering embers, warm gradient per zone."""
+    v = st.setdefault("v", [random.uniform(0.5, 1.0) for _ in range(4)])
+    out = []
+    for i in range(4):
+        v[i] = max(0.30, min(1.0, v[i] + random.uniform(-0.22, 0.22)))
+        out.append((int(255 * v[i]), int(115 * v[i] ** 1.8),
+                    int(10 * v[i] ** 3)))
+    return out
+
+
+def fx_heartbeat(t, p, cols, st):
+    """Lub-dub double pulse, then rest."""
+    x = (t % p) / p
+    env = (math.exp(-((x - 0.10) / 0.045) ** 2)
+           + 0.62 * math.exp(-((x - 0.30) / 0.055) ** 2) + 0.03)
+    return [dim(cols[0], min(1.0, env))] * 4
+
+
+def fx_aurora(t, p, cols, st):
+    """Northern lights: greens through purples, slowly drifting per zone."""
+    out = []
+    for i in range(4):
+        hue = 0.45 + 0.25 * math.sin(2 * math.pi * (t / p + i * 0.13))
+        val = 0.55 + 0.45 * math.sin(2 * math.pi * (t / (p * 0.7) + i * 0.31))
+        out.append(hsv(hue, 0.85, 0.35 + 0.65 * max(0.0, val)))
+    return out
+
+
+def fx_ocean(t, p, cols, st):
+    """Blue swells rolling across the zones."""
+    out = []
+    for i in range(4):
+        swell = max(0.0, math.sin(2 * math.pi * (t / p - i / 4))) ** 1.5
+        hue = 0.52 + 0.06 * math.sin(2 * math.pi * (t / (p * 3) + i / 7))
+        out.append(hsv(hue, 1.0, 0.15 + 0.85 * swell))
+    return out
+
+
+def fx_lava(t, p, cols, st):
+    """Slow oozing magma: deep reds wandering into orange."""
+    v = st.setdefault("v", [random.uniform(0.4, 0.9) for _ in range(4)])
+    out = []
+    for i in range(4):
+        v[i] = max(0.25, min(1.0, v[i] + random.uniform(-0.06, 0.06)))
+        out.append((int(255 * v[i]), int(60 * v[i] ** 2.2), 0))
+    return out
+
+
+def fx_matrix(t, p, cols, st):
+    """Digital rain: dim green field, bright drops decaying."""
+    lev = st.setdefault("lev", [0.0] * 4)
+    for i in range(4):
+        lev[i] *= 0.72
+    if random.random() < 0.30:
+        lev[random.randrange(4)] = 1.0
+    return [(0, int(45 + 210 * lev[i]), int(20 * lev[i])) for i in range(4)]
+
+
+def fx_candle(t, p, cols, st):
+    """Cozy warm flicker, subtler and slower than fire."""
+    v = st.setdefault("v", [0.75] * 4)
+    out = []
+    for i in range(4):
+        v[i] = max(0.55, min(0.95, v[i] + random.uniform(-0.08, 0.08)))
+        out.append(dim((255, 150, 30), v[i]))
+    return out
+
+
+def fx_storm(t, p, cols, st):
+    """Dark night sky, random lightning strikes."""
+    lev = st.setdefault("lev", [0.0] * 4)
+    for i in range(4):
+        lev[i] *= 0.55
+    if random.random() < 0.035:
+        strike = random.sample(range(4), random.choice((1, 2, 4)))
+        for i in strike:
+            lev[i] = 1.0
+    base = (2, 5, 22)
+    return [tuple(min(255, int(b + (f - b) * lev[i]))
+                  for b, f in zip(base, (225, 235, 255))) for i in range(4)]
+
+
+def fx_disco(t, p, cols, st):
+    """Hard cuts on the beat: random zones, random vivid colors."""
+    beat = int(t / p)
+    if st.get("beat") != beat:
+        st["beat"] = beat
+        st["frame"] = [hsv(random.random()) if random.random() < 0.6
+                       else (0, 0, 0) for _ in range(4)]
+        if all(c == (0, 0, 0) for c in st["frame"]):
+            st["frame"][random.randrange(4)] = hsv(random.random())
+    return st["frame"]
+
+
+def fx_duel(t, p, cols, st):
+    """Two comets from opposite ends, additive blend where they cross."""
+    x = (2 * t / p) % 2.0
+    pos_a = 3 * x if x < 1 else 3 * (2 - x)
+    pos_b = 3 - pos_a
+    a, b = cols[0], cols[1] if len(cols) > 1 else cols[0]
+    out = []
+    for i in range(4):
+        ia = max(0.0, 1.0 - abs(i - pos_a)) ** 1.6
+        ib = max(0.0, 1.0 - abs(i - pos_b)) ** 1.6
+        out.append(tuple(min(255, int(ca * ia + cb * ib))
+                         for ca, cb in zip(a, b)))
+    return out
+
+
+def fx_shadow(t, p, cols, st):
+    """Inverse snake: lit field with a roaming dark gap."""
+    x = (2 * t / p) % 2.0
+    pos = 3 * x if x < 1 else 3 * (2 - x)
+    return [dim(cols[0], min(1.0, (abs(i - pos) / 1.2) ** 1.3))
+            for i in range(4)]
+
+
+def fx_ripple(t, p, cols, st):
+    """Breathing that flows through the zones with a phase lag."""
+    return [dim(cols[0], (1 - math.cos(2 * math.pi * (t / p - i * 0.18))) / 2)
+            for i in range(4)]
+
+
+def fx_chase(t, p, cols, st):
+    """Marquee: one zone hard-on at a time."""
+    idx = int(4 * t / p) % 4
+    return [cols[0] if i == idx else dim(cols[0], 0.04) for i in range(4)]
+
+
+def fx_strobe(t, p, cols, st):
+    on = int(2 * t / p) % 2 == 0
+    return [cols[0] if on else (0, 0, 0)] * 4
+
+
+def _cpu_temp(st):
+    now = time.monotonic()
+    if now - st.get("t_read", 0) > 2.0:
+        st["t_read"] = now
+        best = None
+        for hw in glob.glob("/sys/class/hwmon/hwmon*"):
+            try:
+                name = open(hw + "/name").read().strip()
+                temps = [int(open(f).read()) / 1000
+                         for f in glob.glob(hw + "/temp*_input")]
+                if not temps:
+                    continue
+                if name == "coretemp" or best is None:
+                    best = max(temps)
+            except (OSError, ValueError):
+                continue
+        st["temp"] = best if best is not None else 60.0
+    return st["temp"]
+
+
+def fx_cpuheat(t, p, cols, st):
+    """CPU temp gauge: 45C green -> 90C red, gentle pulse for life."""
+    temp = _cpu_temp(st)
+    frac = max(0.0, min(1.0, (temp - 45.0) / 45.0))
+    pulse = 0.88 + 0.12 * math.sin(2 * math.pi * t / p)
+    return [dim(hsv(0.33 * (1 - frac)), pulse)] * 4
+
+
+def fx_battery(t, p, cols, st):
+    """Four zones = four charge quarters; breathes while charging."""
+    now = time.monotonic()
+    if now - st.get("t_read", 0) > 5.0:
+        st["t_read"] = now
+        try:
+            bat = glob.glob("/sys/class/power_supply/BAT*")[0]
+            st["cap"] = int(open(bat + "/capacity").read())
+            st["chg"] = open(bat + "/status").read().strip() == "Charging"
+        except (IndexError, OSError, ValueError):
+            st["cap"], st["chg"] = 100, False
+    cap, chg = st["cap"], st["chg"]
+    color = hsv(0.33 * cap / 100)
+    breath = ((1 - math.cos(2 * math.pi * t / p)) / 2) if chg else 1.0
+    out = []
+    for i in range(4):
+        fill = max(0.0, min(1.0, (cap - i * 25) / 25))
+        out.append(dim(color, fill * (0.35 + 0.65 * breath)))
+    return out
+
+
+def fx_prism(t, p, cols, st):
+    """Ripple whose hue advances one step per sweep — the color switch
+    happens at each zone's dark trough, so every bloom arrives in the
+    next tone. Progressive spectrum, seamless forever."""
+    out = []
+    for i in range(4):
+        ph = t / p - i * 0.18
+        cycle = math.floor(ph)
+        inten = (1 - math.cos(2 * math.pi * ph)) / 2
+        out.append(dim(hsv((cycle * 0.14) % 1.0), inten))
+    return out
+
+
+def fx_glitch(t, p, cols, st):
+    """Rock-steady base color, randomly seized by malfunction bursts."""
+    base = cols[0]
+    wrong = [(255, 0, 144), (255, 255, 255), (0, 255, 65),
+             (0, 234, 255), (0, 0, 0)]
+    n = st.get("burst", 0)
+    if n > 0:
+        st["burst"] = n - 1
+        return [random.choice(wrong) if random.random() < 0.7 else base
+                for _ in range(4)]
+    if random.random() < 0.04:
+        st["burst"] = random.randint(2, 7)
+    return [base] * 4
+
+
+def fx_eruption(t, p, cols, st):
+    """Dim smoldering magma; occasionally the whole thing blows."""
+    v = st.setdefault("v", [0.25] * 4)
+    e = st.get("e", 0.0) * 0.93
+    if random.random() < 0.015:
+        e = 1.0
+    st["e"] = e
+    out = []
+    for i in range(4):
+        v[i] = max(0.12, min(0.40, v[i] + random.uniform(-0.05, 0.05)))
+        flare = e * random.uniform(0.75, 1.0)
+        r = min(1.0, v[i] + flare)
+        out.append((int(255 * r), int(40 * v[i] + 160 * flare ** 1.5),
+                    int(190 * flare ** 3)))
+    return out
+
+
+def fx_redalert(t, p, cols, st):
+    """Klaxon: tense ramp up, hold, hard cut. Repeat until crisis over."""
+    x = (t % p) / p
+    if x < 0.55:
+        env = (x / 0.55) ** 2
+    elif x < 0.72:
+        env = 1.0
+    else:
+        env = max(0.06, 1.0 - (x - 0.72) / 0.10)
+    return [dim(cols[0], env)] * 4
+
+
+def fx_supernova(t, p, cols, st):
+    """Charge-up in the core, detonation front, orange afterglow."""
+    x = (t % p) / p
+    out = []
+    for i in range(4):
+        d = abs(i - 1.5)          # distance from keyboard center
+        if x < 0.60:              # charging: core brightens blue-white
+            f = (x / 0.60) ** 2 * max(0.15, 1.0 - d * 0.55)
+            out.append(dim((170, 200, 255), f))
+        elif x < 0.75:            # detonation front races outward
+            front = (x - 0.60) / 0.15 * 2.4
+            f = math.exp(-((d - front) * 2.0) ** 2)
+            out.append(dim((255, 255, 255), f))
+        else:                     # embers fade
+            f = max(0.0, 1.0 - (x - 0.75) / 0.25) ** 2 * (1.0 - d * 0.25)
+            out.append(dim((255, 120, 20), f))
+    return out
+
+
+def fx_shockwave(t, p, cols, st):
+    """Silence, then a bright front slams across the board."""
+    x = (t % p) / p
+    if x >= 0.30:
+        return [dim(cols[0], 0.05)] * 4
+    pos = x / 0.30 * 4.6 - 0.8
+    return [dim(cols[0], min(1.0, 0.05 + math.exp(-((i - pos) * 1.8) ** 2)))
+            for i in range(4)]
+
+
+FX_FUNCS = {
+    "breathe": fx_breathe, "rainbow": fx_rainbow, "wave": fx_wave,
+    "snake": fx_snake, "meteor": fx_meteor, "police": fx_police,
+    "sparkle": fx_sparkle, "fire": fx_fire, "heartbeat": fx_heartbeat,
+    "aurora": fx_aurora, "ocean": fx_ocean, "lava": fx_lava,
+    "matrix": fx_matrix, "candle": fx_candle, "storm": fx_storm,
+    "disco": fx_disco, "duel": fx_duel, "shadow": fx_shadow,
+    "ripple": fx_ripple, "chase": fx_chase, "strobe": fx_strobe,
+    "cpuheat": fx_cpuheat, "battery": fx_battery, "prism": fx_prism,
+    "glitch": fx_glitch, "eruption": fx_eruption, "redalert": fx_redalert,
+    "supernova": fx_supernova, "shockwave": fx_shockwave,
+}
+
+
+def run_effect(effect, colors, period, bright):
+    daemonize()
+    bmax = max(1, min(100, bright))
+    fn = FX_FUNCS[effect]
+    dt = EFFECTS[effect][2]
+    st = {}
+    dev = None
+    t0 = time.monotonic()
+    while True:
+        try:
+            if dev is None:
+                path = find_dev()
+                if path is None:
+                    raise OSError("device absent")
+                dev = open(path, "rb+", buffering=0)
+            zones = fn(time.monotonic() - t0, period, colors, st)
+            for mask, (r, g, b) in zip(ZONES, zones):
+                send(dev.fileno(), mask, r, g, b, bmax)
+            time.sleep(dt)
+        except OSError:
+            # device blipped (suspend/resume, i2c reset) — reopen and go on
+            try:
+                if dev:
+                    dev.close()
+            except OSError:
+                pass
+            dev = None
+            time.sleep(2)
+
+
+# ---------------------------------------------------------------- tools
+
+FALLBACK_COLORS = [(255, 42, 42), (0, 234, 255), (255, 179, 0), (0, 255, 65)]
+
+
+def theme_or_default():
+    try:
+        return theme_colors()
+    except SystemExit:
+        return FALLBACK_COLORS
+
+
+def cmd_status():
+    path = find_dev()
+    print(f"device:  {path or 'NOT FOUND'}")
+    try:
+        print(f"saved:   {open(STATE).read()}")
+    except OSError:
+        print("saved:   (nothing)")
+    try:
+        pid = int(open(PIDFILE).read())
+        alive = os.path.exists(f"/proc/{pid}")
+        print(f"daemon:  pid {pid} ({'running' if alive else 'dead, stale pidfile'})")
+    except (OSError, ValueError):
+        print("daemon:  not running")
+
+
+def cmd_demo():
+    stop_fx()
+    print("touring all effects, ~4s each — Ctrl-C to stop\n")
+    try:
+        with open_dev() as dev:
+            fd = dev.fileno()
+            for name in FX_FUNCS:
+                print(f"  {name}", flush=True)
+                p, _, dt = EFFECTS[name]
+                cols = DEFAULT_COLORS.get(name) or theme_or_default()
+                st = {}
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 4.0:
+                    zones = FX_FUNCS[name](time.monotonic() - t0, p, cols, st)
+                    for mask, (r, g, b) in zip(ZONES, zones):
+                        send(fd, mask, r, g, b)
+                    time.sleep(dt)
+    except KeyboardInterrupt:
+        print()
+    print("\ndemo over — apply one with: kbrgb <effect>")
+
+
+def cmd_probe():
+    """Guided diagnostic for testing new hardware. Produces a paste-ready
+    report for a GitHub issue."""
+    stop_fx()
+    path = find_dev()
+    if path is None:
+        print("RESULT: no ENEK5130 device — this tool does not apply to "
+              "your machine as-is.\nDevices present:")
+        for p in glob.glob("/sys/class/hidraw/hidraw*"):
+            uev = dict(l.split("=", 1) for l in
+                       open(p + "/device/uevent").read().splitlines())
+            print(f"  {p}: {uev.get('HID_NAME', '?')}")
+        sys.exit(1)
+
+    answers = []
+
+    def step(desc, fn):
+        fn()
+        ans = input(f"[{len(answers) + 1}] {desc}\n    what you see> ").strip()
+        answers.append((desc, ans))
+
+    print(f"kbrgb hardware probe — device {path}")
+    print("answer each question with what your keyboard actually shows.\n")
+    try:
+        with open(path, "rb+", buffering=0) as f:
+            fd = f.fileno()
+
+            def dark():
+                for m in ZONES:
+                    send(fd, m, 0, 0, 0)
+
+            dark()
+            step("zone 1 (leftmost) RED only?",
+                 lambda: send(fd, 0x01, 255, 0, 0))
+            step("zone 2 GREEN added?", lambda: send(fd, 0x02, 0, 255, 0))
+            step("zone 3 BLUE added?", lambda: send(fd, 0x04, 0, 0, 255))
+            step("zone 4 (rightmost) WHITE added?",
+                 lambda: send(fd, 0x08, 255, 255, 255))
+
+            def all_mask():
+                dark()
+                send(fd, 0x0F, 255, 0, 255)
+            step("mask 0x0f: ALL zones magenta? full brightness or dim?",
+                 all_mask)
+
+            def red15():
+                for m in ZONES:
+                    send(fd, m, 255, 0, 0, 15)
+            step("red at brightness byte 15 — how bright?", red15)
+
+            def red100():
+                for m in ZONES:
+                    send(fd, m, 255, 0, 0, 100)
+            step("red at brightness byte 100 — brighter than before?", red100)
+
+            def burst():
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 3.0:
+                    t = time.monotonic() - t0
+                    for i, m in enumerate(ZONES):
+                        send(fd, m, *hsv(t / 2 + i / 4))
+                    time.sleep(0.05)
+            step("3s animation burst — smooth, or flicker/stalls?", burst)
+            dark()
+    except KeyboardInterrupt:
+        print("\nprobe aborted")
+        sys.exit(1)
+
+    model = "?"
+    try:
+        model = open("/sys/class/dmi/id/product_name").read().strip()
+    except OSError:
+        pass
+    print("\n--- copy everything below into a GitHub issue ---")
+    print(f"Model: {model}")
+    print(f"Device: {path}")
+    for desc, ans in answers:
+        print(f"- {desc} -> {ans}")
+
+
+# ---------------------------------------------------------------- main
+
+def main():
+    args = sys.argv[1:]
+    restoring = args == ["restore"]
+    if restoring:
+        try:
+            args = open(STATE).read().split()
+        except OSError:
+            die("nothing saved to restore")
+
+    brightness, period = 100, None
+    for flag in ("-b", "-s"):
+        if flag in args:
+            i = args.index(flag)
+            try:
+                val = float(args[i + 1])
+            except (IndexError, ValueError):
+                die(f"{flag} needs a number")
+            if flag == "-b":
+                brightness = int(val)
+            else:
+                period = val
+            del args[i:i + 2]
+
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+
+    if args == ["list"]:
+        print("\n".join(EFFECTS))
+        return
+    if args == ["status"]:
+        cmd_status()
+        return
+    if args == ["demo"]:
+        cmd_demo()
+        return
+    if args == ["probe"]:
+        cmd_probe()
+        return
+
+    def save():
+        if restoring:
+            return
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        extra = ["-s", str(period)] if period else []
+        with open(STATE, "w") as st:
+            st.write(" ".join(["-b", str(brightness)] + extra + args))
+
+    # --- animated effects (daemonized) ---
+    if args[0] in EFFECTS:
+        effect, rest = args[0], args[1:]
+        d_period, max_cols, _ = EFFECTS[effect]
+        if len(rest) > max_cols or not all(is_hexish(a) for a in rest):
+            die(f"{effect} takes up to {max_cols} hex color(s)")
+        colors = [parse_hex(a) for a in rest]
+        if not colors:
+            colors = DEFAULT_COLORS.get(effect) or theme_or_default()
+        period = period or d_period
+        stop_fx()
+        save()
+        run_effect(effect, colors, period, brightness)
+        return  # unreachable (daemon loops)
+
+    # --- static modes ---
+    if args == ["off"]:
+        colors = [(0, 0, 0)] * 4
+        brightness = 1
+    elif args == ["theme"]:
+        colors = theme_colors()
+    elif len(args) == 1:
+        colors = [parse_hex(args[0])] * 4
+    elif len(args) == 4:
+        colors = [parse_hex(a) for a in args]
+    else:
+        die("give colors, 'theme', an effect, or 'off' (see --help)")
+
+    stop_fx()
+    bri = max(1, min(100, brightness))
+    with open_dev() as f:
+        for mask, (r, g, b) in zip(ZONES, colors):
+            send(f.fileno(), mask, r, g, b, bri)
+    save()
+
+
+if __name__ == "__main__":
+    main()
