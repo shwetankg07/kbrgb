@@ -92,6 +92,23 @@ The `examples/` directory has a walker-based preset picker (`kbrgb-menu`),
 a ready-made `presets.conf`, omarchy hooks for theme sync + boot restore,
 and a systemd user service for non-omarchy setups.
 
+## Troubleshooting
+
+- **Colors set by other tools (DAMX, scripts) revert after a split second** —
+  a kbrgb effect daemon is running and repainting every frame. `kbrgb off`
+  stops it. One animation engine at a time; last writer wins.
+- **Nothing happens at all** — check the device exists
+  (`grep -l ENEK5130 /sys/class/hidraw/*/device/uevent`) and that the udev
+  rule is installed (`ls /etc/udev/rules.d/ | grep kbrgb`), or run with sudo.
+
+## DAMX integration
+
+If you use [DAMX](https://github.com/PXDiv/Div-Acer-Manager-Max), a patch
+based on this protocol makes its entire Lighting tab (static, per-zone, and
+the standard dynamic effects) work on ENEK5130 models — see the PR linked
+from [Div-Acer-Manager-Max#172](https://github.com/PXDiv/Div-Acer-Manager-Max/issues/172).
+Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
+
 ## Supported hardware
 
 | Model | Status |
