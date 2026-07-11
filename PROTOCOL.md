@@ -34,14 +34,20 @@ models very welcome — open an issue.
 
 ## Findings on this EC revision
 
-1. **Brightness byte is 0–100.** predator-sense maps its UI to 1–15
-   (`hid_rgb.rs` comment: "Protocol brightness range is 0x01-0x0f"), which on
-   this EC yields 15% brightness. Verified: identical packet with byte 3 =
+1. **Brightness byte is 0–100.** Verified: identical packet with byte 3 =
    `15` vs `100` → clearly different LED output, `100` ≈ full. Values > 100
-   untested (deliberately).
+   untested (deliberately). Earlier predator-sense versions mapped their UI
+   to 1–15; after this was reported upstream
+   ([predator-sense#12](https://github.com/cleyton1986/predator-sense/issues/12)),
+   the maintainer confirmed `0x64` (100) was the working value in the
+   original PHN16-73 capture all along and shipped the fix in
+   **v0.2.27-preview**. Whether 100 = full also holds on the PHN16-73 EC
+   remains unconfirmed until someone tests that machine.
 2. **Zone mask `0x0f` ("all zones") misbehaves** — output is dim/incorrect.
    Individual masks `0x01/0x02/0x04/0x08` (one write per zone) work exactly
    as expected, including four different colors simultaneously.
+   predator-sense already wrote zones individually and removed its unused
+   `ZONE_ALL` constant after this report.
 3. **No transitions, no persistence.** Writes apply instantly (no EC-side
    fade). The controller loses all state on full power-off and boots into
    its built-in color wave. Reapply on boot (see `examples/omarchy/`).
