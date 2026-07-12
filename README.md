@@ -154,7 +154,9 @@ grep -l ENEK5130 /sys/class/hidraw/*/device/uevent
 
 ## Contributing
 
-Yes please. The most useful things right now:
+If kbrgb got your keyboard working, dropping a star helps the next person
+with one of these laptops actually find this page. Beyond that, the most
+useful things right now:
 
 - **Testers with other ENEK5130 models.** Run `kbrgb probe`: it walks you
   through a guided diagnostic and prints a paste-ready report for a GitHub
