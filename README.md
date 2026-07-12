@@ -1,11 +1,13 @@
 # kbrgb
 
-**Linux RGB control for Acer laptops with the ENEK5130 i2c-HID keyboard controller**
-(Predator Helios Neo 16S AI / PHN16S-71 — confirmed working; see [supported hardware](#supported-hardware))
+RGB keyboard control for the Acer laptops where nothing else works: the 2025-era
+Predator and Nitro models that moved their keyboard lighting to an ENE KB5130
+chip (`ENEK5130` on i2c-HID). Built on a Predator Helios Neo 16S AI (PHN16S-71),
+confirmed on other machines since, see [supported hardware](#supported-hardware).
 
-29 animated effects, the EC's own onboard effects, per-zone static colors, a
-preset picker, theme sync, and boot restore — in a single dependency-free
-Python script. No kernel module, no daemon manager, no conflict with
+One Python file, no dependencies, no kernel module. 29 software effects, the
+EC's own builtin effects, per-zone static colors, a preset picker, theme sync
+and boot restore. Coexists fine with
 [Linuwu-Sense](https://github.com/0x7375646F/Linuwu-Sense) fan control.
 
 ```
@@ -21,39 +23,41 @@ kbrgb off
 
 ## Why this exists
 
-On several 2025+ Acer gaming laptops, none of the existing Linux tools can
-control the keyboard RGB:
+I put Linux on this laptop and found out the keyboard RGB was unreachable.
+DAMX, Linuwu-Sense, facer: they all talk to Acer's WMI interface, and on this
+hardware generation the firmware accepts every call (`AE_OK`) and then does
+nothing. The LEDs never change because they aren't wired to WMI anymore. The
+real controller is a separate ENE KB5130 chip on i2c-HID (`ENEK5130:00`, VID
+`0CF2` PID `5130`, shows up as `/dev/hidrawN`) and it only listens to 11-byte
+HID feature reports.
 
-- The Acer WMI gaming methods (used by Linuwu-Sense, DAMX, facer) **accept the
-  RGB writes (`AE_OK`) but the LEDs never change** — on this hardware they
-  simply don't reach the LED controller.
-- The actual controller is a separate **ENE KB5130 chip on i2c-HID**
-  (`ENEK5130:00`, VID `0CF2` PID `5130`, `/dev/hidrawN`), controlled with
-  11-byte HID feature reports.
-
-The HID protocol was discovered by the community — see
+The HID protocol was first cracked by the community, see
 [cleyton1986/predator-sense](https://github.com/cleyton1986/predator-sense)
-(`hid_rgb.rs`) and Linuwu-Sense issue #4. `kbrgb` reimplements it in
-userspace Python and adds a software animation engine on top.
+(`hid_rgb.rs`) and the Linuwu-Sense issue threads. kbrgb reimplements it in
+userspace Python, puts a software animation engine on top, and can also
+trigger the EC's builtin effects directly.
 
-**New findings documented here** (verified on a real PHN16S-71, see
+Along the way this repo picked up some protocol findings of its own, all
+verified on real hardware (details and packet layout in
 [PROTOCOL.md](PROTOCOL.md)):
 
-1. The brightness byte range is **0–100** on this EC revision, not 1–15 as
-   previously assumed — tools using 15 as max run the LEDs at 15% brightness
-   (reported upstream and fixed in predator-sense v0.2.27-preview).
-2. ~~The all-zones mask `0x0f` misbehaves~~ **Correction:** `0x0f` works
-   fine — the original claim was a test artifact (packet sent at
-   brightness 15), caught by an independent probe report in issue #1.
-   Details in PROTOCOL.md.
-3. The controller has no persistent memory: it resets to its built-in wave
-   effect on full power-off (hence the boot-restore hook).
-4. The EC's **native onboard effects are triggerable**: byte 2 of the packet
-   (long documented as "unknown, constant 0x02") is actually the effect
-   selector — discovered by [abduvaliy-hbai](https://github.com/abduvaliy-hbai)
-   in [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213),
-   confirmed here on a PHN16S-71. `kbrgb native <name>` uses them: one write,
-   the hardware animates by itself, zero CPU. Full byte map in PROTOCOL.md.
+1. The brightness byte goes 0 to 100 on this EC revision, not 1 to 15 like
+   older tools assumed. A tool sending 15 as "max" is quietly running your
+   LEDs at 15% brightness. Reported upstream and fixed in predator-sense
+   v0.2.27-preview.
+2. ~~The all-zones mask 0x0f misbehaves~~ Correction: `0x0f` works fine. The
+   original claim was my own test artifact (the packet went out at brightness
+   15), caught thanks to an independent probe report in issue #1. Full story
+   in PROTOCOL.md, kept there as a warning about single-variable testing.
+3. The controller has no persistent memory. Full power off and it wakes up in
+   its builtin rainbow wave, which is why there's a boot restore hook.
+4. The EC's native effects are triggerable. Byte 2 of the packet, which
+   everyone had written down as "unknown, constant 0x02", is actually the
+   effect selector. Discovered by
+   [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in
+   [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213),
+   confirmed here on a PHN16S-71. One write and the hardware animates by
+   itself, zero CPU.
 
 ## Install
 
@@ -64,15 +68,16 @@ sudo ./install.sh      # installs kbrgb to /usr/local/bin + udev rule
 kbrgb rainbow          # no sudo needed after install
 ```
 
-Requirements: Python 3.11+, a `linuwu_sense` group or the bundled udev rule
-(grants access via `uaccess` to the active seat). No pip packages.
+Needs Python 3.11+ and nothing else, no pip packages. The bundled udev rule
+grants device access to whoever is at the keyboard (`uaccess`), so after
+install everything runs as your normal user.
 
 ## Effects
 
 | Calm | Motion | Drama | Functional |
 |---|---|---|---|
-| `breathe [C]` | `snake [C]` | `storm` | `cpuheat` — temp gauge |
-| `aurora` | `meteor [C]` | `eruption` | `battery` — charge bar |
+| `breathe [C]` | `snake [C]` | `storm` | `cpuheat`, a CPU temp gauge |
+| `aurora` | `meteor [C]` | `eruption` | `battery`, a live charge bar |
 | `ocean` | `wave` | `supernova` | |
 | `lava` | `duel [C1 C2]` | `redalert [C]` | |
 | `candle` | `shadow [C]` | `shockwave [C]` | |
@@ -81,49 +86,55 @@ Requirements: Python 3.11+, a `linuwu_sense` group or the bundled udev rule
 | `prism` | | `disco` / `sparkle [C..]` | |
 | | | `matrix` / `fire` / `strobe [C]` | |
 
-Flags: `-b N` brightness (0–100), `-s N` cycle period in seconds.
-Effects default to colors from the active [omarchy](https://omarchy.org)
-theme when available, with built-in fallbacks otherwise.
+Flags: `-b N` for brightness (0 to 100), `-s N` for the cycle period in
+seconds. Colors are optional RRGGBB hex. When you don't give any, effects
+pull colors from the active [omarchy](https://omarchy.org) theme if there is
+one, with sane fallbacks otherwise.
 
-**EC-native effects** — `kbrgb native breathe|neon|wave|zoom|meteor|twinkle [C]`
-runs the controller's own onboard animations: a single write, then the
-hardware loops it forever with zero CPU cost (unlike the software effects
-above, which stream ~14 frames/sec from a tiny daemon). `neon`, `wave` and
-`zoom` are hardware color cycles that ignore the color argument; for natives
-`-s` is the EC speed 0–10. `kbrgb native list` shows the map.
+These are software effects: a tiny daemon streams frames to the controller
+(~14 per second, the chip handles far more without complaint). They survive
+suspend, the daemon just reopens the device if the i2c bus blips.
 
-Handy commands:
+If you'd rather have the hardware do the work, `kbrgb native
+breathe|neon|wave|zoom|meteor|twinkle [C]` switches the EC to one of its
+builtin animations. Single write, zero CPU afterwards. `neon`, `wave` and
+`zoom` are hardware color cycles and ignore the color argument, and for
+natives `-s` means the EC speed, 0 to 10. `kbrgb native list` prints the map.
 
-- `kbrgb demo` — tour every effect, ~4 seconds each
-- `kbrgb list` — effect names (for scripting/pickers)
-- `kbrgb restore` — replay the last setting (the controller forgets on
-  power-off; wire this into a boot hook — examples for omarchy and plain
-  systemd in `examples/`)
-- `kbrgb status` — device path, saved state, effect daemon state
-- `kbrgb probe` — guided hardware diagnostic, see below
+Other commands you'll actually use:
 
-Animations survive suspend/resume: the effect daemon transparently reopens
-the device if the i2c bus blips.
+- `kbrgb demo` tours every effect, about 4 seconds each
+- `kbrgb list` prints effect names, handy for scripts and pickers
+- `kbrgb restore` replays the last setting. The controller forgets on power
+  off, so wire this into a boot hook (examples for omarchy and plain systemd
+  are in `examples/`)
+- `kbrgb status` shows the device path, saved state and daemon state
+- `kbrgb probe` is a guided hardware diagnostic, see below
 
-The `examples/` directory has a walker-based preset picker (`kbrgb-menu`),
-a ready-made `presets.conf`, omarchy hooks for theme sync + boot restore,
-and a systemd user service for non-omarchy setups.
+The `examples/` directory also has a walker-based preset picker
+(`kbrgb-menu`), a ready-made `presets.conf`, and omarchy hooks for theme sync.
 
 ## Troubleshooting
 
-- **Colors set by other tools (DAMX, scripts) revert after a split second** —
-  a kbrgb effect daemon is running and repainting every frame. `kbrgb off`
-  stops it. One animation engine at a time; last writer wins.
-- **Nothing happens at all** — check the device exists
-  (`grep -l ENEK5130 /sys/class/hidraw/*/device/uevent`) and that the udev
-  rule is installed (`ls /etc/udev/rules.d/ | grep kbrgb`), or run with sudo.
+Colors set by other tools (DAMX, scripts) revert after a split second: that's
+a kbrgb effect daemon repainting every frame. `kbrgb off` stops it. One
+animation engine at a time, last writer wins.
+
+Nothing happens at all: check the chip is there,
+
+```bash
+grep -l ENEK5130 /sys/class/hidraw/*/device/uevent
+```
+
+and that the udev rule landed (`ls /etc/udev/rules.d/ | grep kbrgb`), or just
+try once with sudo to rule out permissions.
 
 ## DAMX integration
 
 If you use [DAMX](https://github.com/PXDiv/Div-Acer-Manager-Max), a patch
-based on this protocol makes its entire Lighting tab (static, per-zone, and
-the standard dynamic effects) work on ENEK5130 models — see the PR linked
-from [Div-Acer-Manager-Max#172](https://github.com/PXDiv/Div-Acer-Manager-Max/issues/172).
+based on this protocol makes its Lighting tab work on ENEK5130 models, see
+the PRs linked from
+[Div-Acer-Manager-Max#172](https://github.com/PXDiv/Div-Acer-Manager-Max/issues/172).
 Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
 
 ## Supported hardware
@@ -132,8 +143,8 @@ Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
 |---|---|
 | Predator Helios Neo 16S AI (PHN16S-71) | ✅ confirmed (developed here + independent probe report) |
 | Nitro ANV16S-41 | ✅ confirmed (`kbrgb probe` report by [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213)) |
-| Predator Helios Neo 16 (PHN16-73) | 🤞 same chip + static HID confirmed per predator-sense findings |
-| Anything with `ENEK5130` in `/sys/class/hidraw/*/device/uevent` | probably — **please test and report!** |
+| Predator Helios Neo 16 (PHN16-73) | 🤞 same chip, static HID confirmed per predator-sense findings |
+| Anything with `ENEK5130` in `/sys/class/hidraw/*/device/uevent` | probably. Please test and report! |
 
 Check yours:
 
@@ -143,31 +154,31 @@ grep -l ENEK5130 /sys/class/hidraw/*/device/uevent
 
 ## Contributing
 
-Yes please! Especially:
+Yes please. The most useful things right now:
 
-- **Testers with other ENEK5130 models** — run `kbrgb probe`: it walks you
+- **Testers with other ENEK5130 models.** Run `kbrgb probe`: it walks you
   through a guided diagnostic and prints a paste-ready report for a GitHub
   issue. That's all it takes to get your model documented.
-- **Protocol spelunking** — the native effects are cracked (see PROTOCOL.md),
-  but open threads remain: the init sequence (`0xa4, 0x41–0x48`) from
-  `AcerECKeyboardController.dll`, the inert direction byte, and reading
-  state back via GET report. A USB/i2c capture from Windows PredatorSense
-  would answer all three.
-- **New effects** — an effect is a ~10-line pure function returning 4 RGB
+- **Protocol spelunking.** The native effects are mapped (PROTOCOL.md), but
+  there are open threads: the init sequence (`0xa4, 0x41-0x48`) seen in
+  Acer's Windows DLL, the direction byte that seems to do nothing, and
+  reading state back from the chip. A USB/i2c capture from Windows
+  PredatorSense would answer all three at once.
+- **New effects.** An effect is a ten-line pure function that returns 4 RGB
   tuples per frame. Go wild.
 
 ## Credits
 
-- [cleyton1986/predator-sense](https://github.com/cleyton1986/predator-sense) —
-  first working ENEK5130 HID implementation this builds on
+- [cleyton1986/predator-sense](https://github.com/cleyton1986/predator-sense),
+  the first working ENEK5130 HID implementation, which this builds on
 - [0x7375646F/Linuwu-Sense](https://github.com/0x7375646F/Linuwu-Sense) and
-  [PXDiv/Div-Linuwu-Sense](https://github.com/PXDiv/Div-Linuwu-Sense) — the
+  [PXDiv/Div-Linuwu-Sense](https://github.com/PXDiv/Div-Linuwu-Sense), the
   fan/platform driver ecosystem, and the issue threads where the community
   mapped this hardware
-- [JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module) —
-  the original Acer RGB reverse-engineering lineage
+- [JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module),
+  the original Acer RGB reverse engineering lineage
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The HID protocol facts belong to the community
-that dug them up; this repo just tries to document them properly.
+MIT, see [LICENSE](LICENSE). The protocol facts belong to the community that
+dug them up. This repo just tries to write them down properly.
