@@ -14,23 +14,72 @@ models very welcome — open an issue.
   does not reach this controller** — `AE_OK` is returned, LEDs never change.
   Brightness-only WMI calls do flash the LEDs briefly before being overridden.
 
-## Static zone color — feature report `0xa4`
+## The `0xa4` feature report
 
 11-byte HID feature report via `HIDIOCSFEATURE` (`ioctl 0xC00B4806`):
 
 | Offset | Value | Meaning |
 |---|---|---|
 | 0 | `0xa4` | report ID |
-| 1 | `0x21` | command: static zone color |
-| 2 | `0x02` | unknown, constant |
+| 1 | `0x21` | command: lighting |
+| 2 | mode | **effect selector** — `0x02` = static; see the native effects table below |
 | 3 | `0..100` | **brightness percent** (see finding 1) |
-| 4 | `0x00` | unknown |
-| 5 | `0x00` | unknown |
-| 6 | R | red 0–255 |
+| 4 | speed | effect speed for dynamic modes (`0..10` tested); ignored for static |
+| 5 | direction | direction for dynamic modes — appears ignored on hardware tested so far |
+| 6 | R | red 0–255 (ignored by some native effects, see table) |
 | 7 | G | green 0–255 |
 | 8 | B | blue 0–255 |
-| 9 | mask | zone select: `0x01` `0x02` `0x04` `0x08` (see finding 2) |
+| 9 | mask | zone select: `0x01` `0x02` `0x04` `0x08`, `0x0f` = all (see finding 2) |
 | 10 | `0x00` | unknown |
+
+Bytes 2/4/5 were documented here as "unknown, constant" until
+[abduvaliy-hbai](https://github.com/abduvaliy-hbai) mapped them while working
+on [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213):
+byte 2 selects the effect (`0x02` just means "static"), byte 4 is the speed,
+byte 5 is a direction field. The native effects section below is documented
+here with his permission.
+
+## EC-native effects (mode byte)
+
+The controller has onboard animations (the rainbow wave it boots with is
+one). Writing a single `0xa4` report with one of these mode bytes starts
+the effect and the hardware loops it on its own — no further writes, no
+host-side frame streaming.
+
+Confirmed safe values, as observed on both machines tested:
+
+| mode | ANV16S-41 (abduvaliy-hbai) | PHN16S-71 (this repo) | RGB bytes |
+|---|---|---|---|
+| `0x02` | static | static | used |
+| `0x04` | breathing | breathing fade | used |
+| `0x05` | neon | all zones cycle the color wheel together | ignored |
+| `0x07` | shifting / slide | **the boot rainbow wave**, flowing across zones | ignored |
+| `0x09` | wave | **center-out bounce that cycles hue** (closest to PredatorSense "Zoom") | ignored |
+| `0x0a` | meteor (snake-like) | snake-like sweep | used |
+| `0x0b` | twinkling (random) | random sparkle | used |
+
+Note the `0x07`/`0x09` rows: the two machines' reports describe them
+differently (possibly firmware variance, possibly just how the same motion
+reads on a 4-zone strip). Map by observed behavior on your model, not by
+name. Interesting consequence: `0x09` may be the "Zoom" byte that PR #213
+couldn't find — on the PHN16S-71 it is unmistakably a center-out pulse.
+
+**Hostile values — do not send:**
+
+| mode | behavior |
+|---|---|
+| `0x01`, `0x03` | lights off / black state |
+| `0x06` | short flash, then reverts to the previous effect |
+| `0x08` | glitchy/unstable |
+| `0x0c` | freezes the current lighting until another effect is written |
+
+Speed byte: PR #213 used `0..9` for breathing/neon and `1..10` for the
+rest; `4`–`5` verified mid-speed on the PHN16S-71. Direction byte: values
+`1` and `2` looked identical in PR #213's testing and ours — either the
+firmware ignores it or direction lives in an unidentified byte.
+
+A `0x02` static write cleanly reclaims control from any native effect
+(verified) — that is also the safe way out if you ever hit `0x0c`.
 
 ## Findings on this EC revision
 
@@ -64,14 +113,27 @@ models very welcome — open an issue.
    `0xa4` write overrides. While an animation streams frames, Fn changes
    appear for a split second and are then clobbered — use the tool's own
    brightness instead.
+6. **Use `ioctl HIDIOCSFEATURE`, not `write()`.** On the PHN16-73,
+   `write()` to the hidraw node works exactly once after boot and is then
+   silently ignored; the feature-report ioctl works every time (reported by
+   papodesysadmin in the
+   [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213)
+   thread). `write()` has not been observed to
+   misbehave on the PHN16S-71, but there is no reason to risk it — every
+   packet in this document is an ioctl.
 
 ## Open questions
 
-- **Native effects**: the EC clearly has onboard animations (its boot wave).
-  Command bytes other than `0x21`, and the init sequence `0xa4, 0x41–0x48`
-  seen in decompiled `AcerECKeyboardController.dll`, are unexplored. A HID
-  capture from Windows PredatorSense while switching effects would settle it.
+- **Init sequence**: `0xa4, 0x41–0x48` seen in decompiled
+  `AcerECKeyboardController.dll` remains unexplored (the native effects
+  above don't need it). A HID capture from Windows PredatorSense would
+  settle what it does.
+- **`0x07` vs `0x09`**: do these effects genuinely differ between the
+  ANV16S-41 and PHN16S-71 firmwares, or do the same animations just read
+  differently to different eyes? A video from each model would settle it.
+- **Direction**: byte 5 appears inert. Is direction encoded elsewhere, or
+  unsupported by this EC generation?
 - **GET report**: reading feature report `0xa4` back (state query) untested.
-- Byte 2 (`0x02`) and bytes 4/5/10 semantics unknown.
+- Byte 10 semantics unknown; mode bytes above `0x0c` unprobed (deliberately).
 - Whether the 0–100 brightness and `0x0f` behavior are common to all
   ENEK5130 firmwares or specific to this revision — **needs testers**.

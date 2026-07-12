@@ -43,9 +43,14 @@ Effects (animated, run until replaced):
   kbrgb supernova               slow charge-up, explosion, fading embers
   kbrgb shockwave [C]           fast bright front slams across, then silence
 
+EC-native effects (one write, the controller animates on its own — zero CPU):
+  kbrgb native <name> [C]       breathe neon wave zoom meteor twinkle
+  kbrgb native list             native effect names + which take a color
+
 Flags:
   -b N    brightness percent 0-100 (default 100)
-  -s N    effect cycle period in seconds (default per effect)
+  -s N    effect cycle period in seconds (default per effect);
+          for native effects: EC speed 0-10 (default 5)
 
 Tools:
   kbrgb list                    list every effect name
@@ -65,9 +70,25 @@ import fcntl, glob, math, os, random, re, signal, sys, time
 # - mask 0x0f writes all four zones at once and works fine; an earlier
 #   "0x0f is broken" claim was a test artifact (packet sent at brightness
 #   15 before the 0-100 range was understood)
+# packet: a4 21 mode bright speed dir R G B mask 00 (mode 0x02 = static;
+# native-effect mode bytes below, discovered in DAMX PR #213)
 HIDIOCSFEATURE_11 = 0xC00B4806
 ZONES = [0x01, 0x02, 0x04, 0x08]
 ZONE_ALL = 0x0F
+
+# EC-native onboard effects: one feature report, hardware loops it forever.
+# Mode byte mapped by abduvaliy-hbai (DAMX PR #213) on a Nitro ANV16S-41;
+# names follow what a PHN16S-71 shows, which differs from his labels for
+# 0x07/0x09 (see PROTOCOL.md). Hostile bytes deliberately unreachable:
+# 0x01/0x03 off, 0x06 flash, 0x08 glitchy, 0x0c freezes the lighting.
+NATIVE = {              # name: (mode byte, respects the RGB bytes)
+    "breathe": (0x04, True),
+    "neon":    (0x05, False),
+    "wave":    (0x07, False),
+    "zoom":    (0x09, False),
+    "meteor":  (0x0A, True),
+    "twinkle": (0x0B, True),
+}
 THEME = os.path.expanduser("~/.config/omarchy/current/theme")
 STATE = os.path.expanduser("~/.local/state/kbrgb/last")
 PIDFILE = os.path.expanduser("~/.local/state/kbrgb/fx.pid")
@@ -139,8 +160,8 @@ def open_dev():
         die(f"no access to {dev} — udev rule missing? (or run with sudo)")
 
 
-def send(fd, mask, r, g, b, bri=100):
-    pkt = bytearray([0xA4, 0x21, 0x02, bri, 0, 0, r, g, b, mask, 0])
+def send(fd, mask, r, g, b, bri=100, mode=0x02, speed=0, direction=0):
+    pkt = bytearray([0xA4, 0x21, mode, bri, speed, direction, r, g, b, mask, 0])
     fcntl.ioctl(fd, HIDIOCSFEATURE_11, pkt)
 
 
@@ -815,6 +836,34 @@ def main():
         extra = ["-s", str(period)] if period else []
         with open(STATE, "w") as st:
             st.write(" ".join(["-b", str(brightness)] + extra + args))
+
+    # --- EC-native effects (single write, hardware animates) ---
+    if args[0] == "native":
+        rest = args[1:]
+        if not rest or rest[0] in ("list", "-h", "--help"):
+            for name, (byte, uses_color) in NATIVE.items():
+                tag = "[C]" if uses_color else "   (color ignored)"
+                print(f"{name:8} 0x{byte:02x} {tag}")
+            return
+        name = rest[0]
+        if name not in NATIVE:
+            die(f"unknown native effect {name!r} (see: kbrgb native list)")
+        if len(rest) > 2 or (len(rest) == 2 and not is_hexish(rest[1])):
+            die(f"native {name} takes one optional hex color")
+        mode, uses_color = NATIVE[name]
+        if len(rest) == 2:
+            color = parse_hex(rest[1])
+        else:
+            color = theme_or_default()[0] if uses_color else (255, 0, 0)
+        speed = 5 if period is None else int(period)
+        if not 0 <= speed <= 10:
+            die("for native effects -s is the EC speed byte, 0-10")
+        stop_fx()
+        with open_dev() as f:
+            send(f.fileno(), ZONE_ALL, *color, max(1, min(100, brightness)),
+                 mode=mode, speed=speed, direction=1)
+        save()
+        return
 
     # --- animated effects (daemonized) ---
     if args[0] in EFFECTS:

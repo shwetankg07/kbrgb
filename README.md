@@ -3,10 +3,10 @@
 **Linux RGB control for Acer laptops with the ENEK5130 i2c-HID keyboard controller**
 (Predator Helios Neo 16S AI / PHN16S-71 — confirmed working; see [supported hardware](#supported-hardware))
 
-29 animated effects, per-zone static colors, a preset picker, theme sync, and
-boot restore — in a single dependency-free Python script. No kernel module, no
-daemon manager, no conflict with [Linuwu-Sense](https://github.com/0x7375646F/Linuwu-Sense)
-fan control.
+29 animated effects, the EC's own onboard effects, per-zone static colors, a
+preset picker, theme sync, and boot restore — in a single dependency-free
+Python script. No kernel module, no daemon manager, no conflict with
+[Linuwu-Sense](https://github.com/0x7375646F/Linuwu-Sense) fan control.
 
 ```
 kbrgb ff2a2a                 # all zones static red
@@ -15,6 +15,7 @@ kbrgb storm                  # night sky with lightning strikes
 kbrgb prism                  # ripple that shifts hue every sweep
 kbrgb battery                # 4 zones become a live battery bar
 kbrgb -b 40 -s 6 aurora      # dim, slow northern lights
+kbrgb native wave            # the EC's builtin rainbow wave, zero CPU
 kbrgb off
 ```
 
@@ -47,6 +48,12 @@ userspace Python and adds a software animation engine on top.
    Details in PROTOCOL.md.
 3. The controller has no persistent memory: it resets to its built-in wave
    effect on full power-off (hence the boot-restore hook).
+4. The EC's **native onboard effects are triggerable**: byte 2 of the packet
+   (long documented as "unknown, constant 0x02") is actually the effect
+   selector — discovered by [abduvaliy-hbai](https://github.com/abduvaliy-hbai)
+   in [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213),
+   confirmed here on a PHN16S-71. `kbrgb native <name>` uses them: one write,
+   the hardware animates by itself, zero CPU. Full byte map in PROTOCOL.md.
 
 ## Install
 
@@ -77,6 +84,13 @@ Requirements: Python 3.11+, a `linuwu_sense` group or the bundled udev rule
 Flags: `-b N` brightness (0–100), `-s N` cycle period in seconds.
 Effects default to colors from the active [omarchy](https://omarchy.org)
 theme when available, with built-in fallbacks otherwise.
+
+**EC-native effects** — `kbrgb native breathe|neon|wave|zoom|meteor|twinkle [C]`
+runs the controller's own onboard animations: a single write, then the
+hardware loops it forever with zero CPU cost (unlike the software effects
+above, which stream ~14 frames/sec from a tiny daemon). `neon`, `wave` and
+`zoom` are hardware color cycles that ignore the color argument; for natives
+`-s` is the EC speed 0–10. `kbrgb native list` shows the map.
 
 Handy commands:
 
@@ -116,9 +130,9 @@ Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
 
 | Model | Status |
 |---|---|
-| Predator Helios Neo 16S AI (PHN16S-71) | ✅ confirmed (developed here) |
-| Predator Helios Neo 16 (PHN16-73) | 🤞 same chip per predator-sense findings |
-| Nitro ANV16S-41 | 🤞 same chip per DAMX #213 |
+| Predator Helios Neo 16S AI (PHN16S-71) | ✅ confirmed (developed here + independent probe report) |
+| Nitro ANV16S-41 | ✅ confirmed (`kbrgb probe` report by [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213)) |
+| Predator Helios Neo 16 (PHN16-73) | 🤞 same chip + static HID confirmed per predator-sense findings |
 | Anything with `ENEK5130` in `/sys/class/hidraw/*/device/uevent` | probably — **please test and report!** |
 
 Check yours:
@@ -134,10 +148,11 @@ Yes please! Especially:
 - **Testers with other ENEK5130 models** — run `kbrgb probe`: it walks you
   through a guided diagnostic and prints a paste-ready report for a GitHub
   issue. That's all it takes to get your model documented.
-- **Protocol spelunking** — the EC's *native* effects (the built-in wave it
-  boots with) must be triggerable somehow; the init sequence
-  (`0xa4, 0x41–0x48`) from `AcerECKeyboardController.dll` is unexplored.
-  A USB/i2c capture from Windows PredatorSense would crack it open.
+- **Protocol spelunking** — the native effects are cracked (see PROTOCOL.md),
+  but open threads remain: the init sequence (`0xa4, 0x41–0x48`) from
+  `AcerECKeyboardController.dll`, the inert direction byte, and reading
+  state back via GET report. A USB/i2c capture from Windows PredatorSense
+  would answer all three.
 - **New effects** — an effect is a ~10-line pure function returning 4 RGB
   tuples per frame. Go wild.
 
