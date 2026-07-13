@@ -142,7 +142,7 @@ Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
 | Model | Status |
 |---|---|
 | Predator Helios Neo 16S AI (PHN16S-71) | ✅ confirmed (developed here + independent probe report) |
-| Nitro ANV16S-41 | ✅ confirmed (`kbrgb probe` report by [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213)) |
+| Nitro ANV16S-41 | ✅ confirmed twice: `kbrgb probe` report by [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213), and daily-driver use on CachyOS ([acer-predator-turbo#287](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module/issues/287)) |
 | Predator Helios Neo 16 (PHN16-73) | 🤞 same chip, static HID confirmed per predator-sense findings |
 | Anything with `ENEK5130` in `/sys/class/hidraw/*/device/uevent` | probably. Please test and report! |
 
