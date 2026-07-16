@@ -124,6 +124,9 @@ EFFECTS = {
     "wpmheat":   (1.0, 0, 0.06),
     "zen":       (30.0, 1, 0.06),
     "load":      (1.0, 0, 0.15),
+    "clock":     (8.0, 0, 0.5),
+    "netpulse":  (1.0, 0, 0.06),
+    "pomo":      (25.0, 0, 0.25),
     "prism":     (3.0, 0, 0.06),
     "glitch":    (1.0, 1, 0.05),
     "eruption":  (1.0, 0, 0.07),
@@ -805,6 +808,83 @@ def fx_zen(t, p, cols, st):
     return [dim(cols[0], env)] * 4
 
 
+# hour-of-day anchors: (hour, hue, saturation, value)
+CLOCK_STOPS = [(0, 0.62, 0.90, 0.25), (5, 0.62, 0.90, 0.30),
+               (6.5, 0.06, 1.00, 0.80), (8, 0.10, 0.60, 0.90),
+               (12, 0.12, 0.40, 1.00), (17, 0.09, 0.80, 0.95),
+               (20, 0.78, 0.70, 0.60), (22, 0.66, 0.90, 0.35),
+               (24, 0.62, 0.90, 0.25)]
+
+
+def fx_clock(t, p, cols, st):
+    """Ambient hue that follows the time of day."""
+    lt = time.localtime()
+    h = lt.tm_hour + lt.tm_min / 60.0
+    for (h0, *a), (h1, *b) in zip(CLOCK_STOPS, CLOCK_STOPS[1:]):
+        if h0 <= h <= h1:
+            f = (h - h0) / (h1 - h0)
+            hue, sat, val = (x + f * (y - x) for x, y in zip(a, b))
+            break
+    breathe = 1.0 + 0.08 * math.sin(2 * math.pi * t / 8.0)
+    return [dim(hsv(hue, sat, val), min(1.0, breathe))] * 4
+
+
+def _net_rates(st):
+    """(rx, tx) bytes/s across non-lo interfaces, cached 0.5 s."""
+    now = time.monotonic()
+    if now - st.get("n_read", 0) > 0.5:
+        rx = tx = 0
+        try:
+            for line in open("/proc/net/dev").readlines()[2:]:
+                name, data = line.split(":", 1)
+                if name.strip() == "lo":
+                    continue
+                f = data.split()
+                rx += int(f[0]); tx += int(f[8])
+        except (OSError, ValueError, IndexError):
+            pass
+        p_rx, p_tx, p_t = st.get("n_prev", (rx, tx, now))
+        dt_ = max(1e-3, now - p_t)
+        st["rates"] = ((rx - p_rx) / dt_, (tx - p_tx) / dt_)
+        st["n_prev"] = (rx, tx, now)
+        st["n_read"] = now
+    return st.get("rates", (0.0, 0.0))
+
+
+def fx_netpulse(t, p, cols, st):
+    """Download flows cyan right-to-left, upload orange left-to-right."""
+    rx, tx = _net_rates(st)
+    lvl = lambda r: min(1.0, math.log10(1 + r) / 8.0)   # 100 MB/s = max
+    rxl, txl = lvl(rx), lvl(tx)
+    st["ph"] = st.get("ph", 0.0) + 0.05 * (0.3 + 3.0 * max(rxl, txl))
+    out = []
+    for i in range(4):
+        wr = 0.5 + 0.5 * math.sin(2 * math.pi * (i / 4.0 + st["ph"]))
+        wt = 0.5 + 0.5 * math.sin(2 * math.pi * (i / 4.0 - st["ph"]))
+        r = min(255, int(6 + 255 * txl * wt))
+        gch = min(255, int(6 + 140 * txl * wt + 200 * rxl * wr))
+        b = min(255, int(10 + 255 * rxl * wr))
+        out.append((r, gch, b))
+    return out
+
+
+def fx_pomo(t, p, cols, st):
+    """Pomodoro: zones drain as quarters of the timer, green->red;
+    triple white flash at zero, then holds dim red until stopped."""
+    rem = p - t
+    if rem <= 0:
+        fl = -rem
+        if fl < 1.8 and (fl % 0.6) < 0.3:
+            return [(255, 255, 255)] * 4
+        return [dim((255, 0, 0), 0.25)] * 4
+    frac = 1.0 - rem / p                        # elapsed fraction
+    color = hsv(0.33 * (1.0 - frac))
+    pulse = (0.55 + 0.45 * math.sin(2 * math.pi * t * 2.0)) if rem < 10 else 1.0
+    q = p / 4.0
+    return [dim(color, pulse * max(0.04, min(1.0, (rem - i * q) / q)))
+            for i in range(4)]
+
+
 FX_FUNCS = {
     "breathe": fx_breathe, "rainbow": fx_rainbow, "wave": fx_wave,
     "snake": fx_snake, "meteor": fx_meteor, "police": fx_police,
@@ -818,6 +898,7 @@ FX_FUNCS = {
     "supernova": fx_supernova, "shockwave": fx_shockwave,
     "typewriter": fx_typewriter, "keyflash": fx_keyflash,
     "wpmheat": fx_wpmheat, "zen": fx_zen, "load": fx_load,
+    "clock": fx_clock, "netpulse": fx_netpulse, "pomo": fx_pomo,
 }
 
 
@@ -1091,6 +1172,12 @@ def main():
     if args[0] in EFFECTS:
         effect, rest = args[0], args[1:]
         d_period, max_cols, _ = EFFECTS[effect]
+        if effect == "pomo":
+            # kbrgb pomo 25 = 25 minutes; the EFFECTS default is minutes too
+            d_period *= 60.0
+            if rest and re.fullmatch(r"\d+(\.\d+)?", rest[0]):
+                period = period or float(rest[0]) * 60.0
+                rest = rest[1:]
         if len(rest) > max_cols or not all(is_hexish(a) for a in rest):
             die(f"{effect} takes up to {max_cols} hex color(s)")
         colors = [parse_hex(a) for a in rest]
