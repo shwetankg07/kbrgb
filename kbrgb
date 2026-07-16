@@ -123,6 +123,7 @@ EFFECTS = {
     "keyflash":  (1.0, 1, 0.03),
     "wpmheat":   (1.0, 0, 0.06),
     "zen":       (30.0, 1, 0.06),
+    "load":      (1.0, 0, 0.15),
     "prism":     (3.0, 0, 0.06),
     "glitch":    (1.0, 1, 0.05),
     "eruption":  (1.0, 0, 0.07),
@@ -559,6 +560,71 @@ def _cpu_temp(st):
     return st["temp"]
 
 
+def _cpu_busy(st):
+    """Aggregate CPU busy %, /proc/stat delta, cached 1 s."""
+    now = time.monotonic()
+    if now - st.get("c_read", 0) > 1.0:
+        st["c_read"] = now
+        try:
+            parts = [int(x) for x in
+                     open("/proc/stat").readline().split()[1:]]
+            idle, total = parts[3] + parts[4], sum(parts)
+            p_idle, p_total = st.get("c_prev", (idle, total))
+            st["c_prev"] = (idle, total)
+            d_total = total - p_total
+            if d_total > 0:
+                st["cpu"] = 100.0 * (1 - (idle - p_idle) / d_total)
+        except (OSError, ValueError, IndexError):
+            pass
+    return st.get("cpu", 0.0)
+
+
+def _gpu_busy(st):
+    """NVIDIA dGPU busy %. A suspended card reads 0 and is left asleep —
+    querying nvidia-smi while it's in D3cold can hang in the kernel."""
+    import subprocess
+    now = time.monotonic()
+    if now - st.get("g_read", 0) < 5.0:
+        return st.get("gpu", 0.0)
+    st["g_read"] = now
+    st["gpu"] = 0.0
+    try:
+        for dev in glob.glob("/sys/bus/pci/devices/*"):
+            if open(dev + "/vendor").read().strip() != "0x10de":
+                continue
+            if not open(dev + "/class").read().startswith("0x03"):
+                continue
+            if open(dev + "/power/runtime_status").read().strip() != "active":
+                return 0.0
+            break
+        else:
+            return 0.0
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, timeout=1, text=True)
+        st["gpu"] = float(out.stdout.strip().splitlines()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        pass
+    return st["gpu"]
+
+
+def fx_load(t, p, cols, st):
+    """CPU load fills the left pair of zones, GPU the right, green->red."""
+    # measurements arrive ~1/s; glide the displayed value between them so
+    # the bars sweep instead of stepping
+    cpu = st["d_cpu"] = st.get("d_cpu", 0.0) * 0.88 + _cpu_busy(st) * 0.12
+    gpu = st["d_gpu"] = st.get("d_gpu", 0.0) * 0.88 + _gpu_busy(st) * 0.12
+    out = []
+    for load, zones in ((cpu, (0, 1)), (gpu, (3, 2))):
+        color = hsv(0.33 * (1.0 - load / 100.0))
+        fills = (min(1.0, load / 50.0) ** 0.5,
+                 max(0.0, (load - 50.0) / 50.0) ** 0.5)
+        for zone, fill in zip(zones, fills):
+            out.append((zone, dim(color, 0.15 + 0.85 * fill)))
+    return [c for _, c in sorted(out)]
+
+
 def fx_cpuheat(t, p, cols, st):
     """CPU temp gauge: 45C green -> 90C red, gentle pulse for life."""
     temp = _cpu_temp(st)
@@ -751,7 +817,7 @@ FX_FUNCS = {
     "glitch": fx_glitch, "eruption": fx_eruption, "redalert": fx_redalert,
     "supernova": fx_supernova, "shockwave": fx_shockwave,
     "typewriter": fx_typewriter, "keyflash": fx_keyflash,
-    "wpmheat": fx_wpmheat, "zen": fx_zen,
+    "wpmheat": fx_wpmheat, "zen": fx_zen, "load": fx_load,
 }
 
 
