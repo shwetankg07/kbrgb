@@ -123,6 +123,7 @@ EFFECTS = {
     "keyflash":  (1.0, 1, 0.03),
     "wpmheat":   (1.0, 0, 0.06),
     "zen":       (30.0, 1, 0.06),
+    "flow":      (30.0, 0, 0.06),
     "load":      (1.0, 0, 0.15),
     "clock":     (8.0, 0, 0.5),
     "netpulse":  (1.0, 0, 0.06),
@@ -158,7 +159,11 @@ def find_dev():
     return None
 
 
-REACTIVE = {"typewriter", "keyflash", "wpmheat", "zen"}
+REACTIVE = {"typewriter", "keyflash", "wpmheat", "zen", "flow"}
+
+# per-run tunables set from the CLI before the daemon forks
+# (e.g. the WPM that maps to full red in wpmheat/flow)
+FX_OPT = {}
 
 # EVIOCGBIT(EV_KEY, 96): read the key-capability bitmap. A device that can
 # emit KEY_A (code 30) is a keyboard for our purposes — this admits the AT
@@ -783,14 +788,34 @@ def fx_keyflash(t, p, cols, st):
     return [dim(cols[0], 0.15 + 0.85 * z[i]) for i in range(4)]
 
 
-def fx_wpmheat(t, p, cols, st):
-    """Typing speed as heat: idle blue, red around 8 keys/s."""
+def _typing_heat(st):
+    """(hue_frac, brightness_frac) from typing speed. Red is reached at
+    FX_OPT["wpm"] (default 96); WPM/12 = keys per second."""
     now = st.get("now", 0.0)
     kps = sum(1 for ts, _ in st.get("keys", ()) if now - ts < 3.0) / 3.0
     ema = st["ema"] = 0.85 * st.get("ema", 0.0) + 0.15 * kps
-    frac = min(1.0, ema / 8.0)
-    bri = 0.30 + 0.70 * min(1.0, ema / 4.0)
-    return [dim(hsv(0.60 * (1.0 - frac)), bri)] * 4
+    kmax = FX_OPT.get("wpm", 96.0) / 12.0
+    return min(1.0, ema / kmax), min(1.0, ema / (kmax / 2.0))
+
+
+def fx_wpmheat(t, p, cols, st):
+    """Typing speed as heat: idle blue, red at your ceiling WPM."""
+    frac, drive = _typing_heat(st)
+    return [dim(hsv(0.60 * (1.0 - frac)), 0.30 + 0.70 * drive)] * 4
+
+
+def fx_flow(t, p, cols, st):
+    """wpmheat and zen in one: color tracks typing speed, and the board
+    falls asleep after p idle seconds (default 30) like zen does."""
+    frac, drive = _typing_heat(st)
+    now = st.get("now", 0.0)
+    if "t0" not in st:
+        st["t0"] = now
+    idle = now - st.get("last_key", st["t0"])
+    env = st.get("env", 1.0)
+    env = min(1.0, env + 0.5) if idle < p else max(0.0, env - 0.03)
+    st["env"] = env
+    return [dim(hsv(0.60 * (1.0 - frac)), (0.30 + 0.70 * drive) * env)] * 4
 
 
 def fx_zen(t, p, cols, st):
@@ -897,7 +922,7 @@ FX_FUNCS = {
     "glitch": fx_glitch, "eruption": fx_eruption, "redalert": fx_redalert,
     "supernova": fx_supernova, "shockwave": fx_shockwave,
     "typewriter": fx_typewriter, "keyflash": fx_keyflash,
-    "wpmheat": fx_wpmheat, "zen": fx_zen, "load": fx_load,
+    "wpmheat": fx_wpmheat, "zen": fx_zen, "flow": fx_flow, "load": fx_load,
     "clock": fx_clock, "netpulse": fx_netpulse, "pomo": fx_pomo,
 }
 
@@ -1178,6 +1203,11 @@ def main():
             if rest and re.fullmatch(r"\d+(\.\d+)?", rest[0]):
                 period = period or float(rest[0]) * 60.0
                 rest = rest[1:]
+        if effect in ("wpmheat", "flow") \
+                and rest and re.fullmatch(r"\d+(\.\d+)?", rest[0]):
+            # kbrgb wpmheat 80 = full red at 80 WPM (default 96)
+            FX_OPT["wpm"] = max(12.0, float(rest[0]))
+            rest = rest[1:]
         if len(rest) > max_cols or not all(is_hexish(a) for a in rest):
             die(f"{effect} takes up to {max_cols} hex color(s)")
         colors = [parse_hex(a) for a in rest]
