@@ -42,6 +42,17 @@ Effects (animated, run until replaced):
   kbrgb redalert [C]            klaxon ramp-and-cut alarm sweep
   kbrgb supernova               slow charge-up, explosion, fading embers
   kbrgb shockwave [C]           fast bright front slams across, then silence
+  kbrgb load                    live load meter: CPU left half, GPU right
+  kbrgb clock                   ambient hue that follows the time of day
+  kbrgb netpulse                network meter: download cyan, upload orange
+  kbrgb pomo [MIN]              pomodoro timer, default 25 minutes
+
+Reactive effects (read your typing; needs the "input" group, see README):
+  kbrgb typewriter [C]          every keystroke glows the board brighter
+  kbrgb keyflash [C]            the zone under each key flashes and spills
+  kbrgb wpmheat [WPM]           typing speed as heat, red at WPM (def. 96)
+  kbrgb zen [C]                 fades out after -s idle seconds, keys wake it
+  kbrgb flow [WPM]              wpmheat + zen: speed heat that sleeps with you
 
 EC-native effects (one write, the controller animates on its own — zero CPU):
   kbrgb native <name> [C]       breathe neon wave zoom meteor twinkle
