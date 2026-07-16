@@ -63,7 +63,7 @@ Tools:
 Colors are RRGGBB hex. Effect defaults come from the active omarchy theme
 when available, with built-in fallbacks otherwise.
 """
-import fcntl, glob, math, os, random, re, signal, sys, time
+import fcntl, glob, math, os, random, re, select, signal, struct, sys, time
 
 # NOTE (verified on PHN16S-71 hardware, two machines):
 # - brightness byte range is 0-100 (predator-sense shipped the same fix
@@ -148,6 +148,78 @@ def find_dev():
         except OSError:
             pass
     return None
+
+
+REACTIVE = {"typewriter", "keyflash", "wpmheat", "zen"}
+
+# EVIOCGBIT(EV_KEY, 96): read the key-capability bitmap. A device that can
+# emit KEY_A (code 30) is a keyboard for our purposes — this admits the AT
+# keyboard, external boards and keyd/kmonad virtual devices, and rejects
+# mice, power buttons and lid switches.
+EVIOCGBIT_EV_KEY = 0x80604521
+KEY_A = 30
+
+
+def open_keyboards():
+    kbs = {}
+    for path in sorted(glob.glob("/dev/input/event*")):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+        caps = bytearray(96)
+        try:
+            fcntl.ioctl(fd, EVIOCGBIT_EV_KEY, caps)
+        except OSError:
+            os.close(fd)
+            continue
+        if caps[KEY_A >> 3] >> (KEY_A & 7) & 1:
+            kbs[fd] = path
+        else:
+            os.close(fd)
+    return kbs
+
+
+def drain_keys(kbs, st):
+    """Non-blocking drain of pending key events into st: the kernel
+    buffers between frames, we collect once per frame. Keycodes live
+    only in memory — nothing is stored or logged."""
+    from collections import deque
+    now = time.monotonic()
+    st["now"] = now
+    st["new"] = []
+    if not kbs:
+        # all devices vanished (e.g. keyd restarted): rescan occasionally
+        if now - st.get("rescan", 0) > 5.0:
+            st["rescan"] = now
+            kbs.update(open_keyboards())
+        return
+    try:
+        ready, _, _ = select.select(list(kbs), [], [], 0)
+    except OSError:
+        ready = []
+    for fd in ready:
+        while True:
+            try:
+                data = os.read(fd, 24 * 64)
+            except BlockingIOError:
+                break                              # buffer drained
+            except OSError:
+                os.close(fd)
+                del kbs[fd]
+                break
+            if not data:
+                break
+            for off in range(0, len(data) - 23, 24):
+                _, _, etype, code, value = struct.unpack_from("QQHHi", data, off)
+                if etype == 1 and value == 1:      # EV_KEY press
+                    st["new"].append((now, code))
+            if len(data) < 24 * 64:
+                break                              # short read: caught up
+    if st["new"]:
+        q = st.setdefault("keys", deque(maxlen=64))
+        q.extend(st["new"])
+        st["last_key"] = now
 
 
 def open_dev():
@@ -619,9 +691,12 @@ def run_effect(effect, colors, period, bright):
     dt = EFFECTS[effect][2]
     st = {}
     dev = None
+    kbs = open_keyboards() if effect in REACTIVE else {}
     t0 = time.monotonic()
     while True:
         try:
+            if effect in REACTIVE:
+                drain_keys(kbs, st)
             if dev is None:
                 path = find_dev()
                 if path is None:
@@ -885,6 +960,14 @@ def main():
         if not colors:
             colors = DEFAULT_COLORS.get(effect) or theme_or_default()
         period = period or d_period
+        if effect in REACTIVE:
+            probe = open_keyboards()
+            if not probe:
+                die("reactive effects need read access to /dev/input — "
+                    "add yourself to the input group: "
+                    "sudo usermod -aG input $USER (then log out and back in)")
+            for fd in probe:
+                os.close(fd)
         stop_fx()
         save()
         run_effect(effect, colors, period, brightness)
