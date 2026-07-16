@@ -385,10 +385,13 @@ def fx_matrix(t, p, cols, st):
 
 def fx_candle(t, p, cols, st):
     """Cozy warm flicker, subtler and slower than fire."""
-    v = st.setdefault("v", [0.75] * 4)
+    v = st.setdefault("v", [0.76] * 4)
     out = []
     for i in range(4):
-        v[i] = max(0.55, min(0.95, v[i] + random.uniform(-0.08, 0.08)))
+        # small random step + pull back toward the resting level, so the
+        # flame drifts instead of strobing (issue #2 reported it as a flash)
+        v[i] += random.uniform(-0.025, 0.025) + 0.06 * (0.76 - v[i])
+        v[i] = max(0.62, min(0.90, v[i]))
         out.append(dim((255, 150, 30), v[i]))
     return out
 
