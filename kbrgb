@@ -51,6 +51,7 @@ Flags:
   -b N    brightness percent 0-100 (default 100)
   -s N    effect cycle period in seconds (default per effect);
           for native effects: EC speed 0-10 (default 5)
+  -r      reverse the native wave (direction byte; other effects ignore it)
 
 Tools:
   kbrgb list                    list every effect name
@@ -815,6 +816,11 @@ def main():
                 period = val
             del args[i:i + 2]
 
+    reverse = False
+    while "-r" in args:
+        args.remove("-r")
+        reverse = True
+
     if not args or args[0] in ("-h", "--help"):
         print(__doc__.strip())
         return
@@ -836,7 +842,8 @@ def main():
         if restoring:
             return
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
-        extra = ["-s", str(period)] if period else []
+        extra = (["-s", str(period)] if period else []) \
+            + (["-r"] if reverse else [])
         with open(STATE, "w") as st:
             st.write(" ".join(["-b", str(brightness)] + extra + args))
 
@@ -864,7 +871,7 @@ def main():
         stop_fx()
         with open_dev() as f:
             send(f.fileno(), ZONE_ALL, *color, max(1, min(100, brightness)),
-                 mode=mode, speed=speed, direction=1)
+                 mode=mode, speed=speed, direction=2 if reverse else 1)
         save()
         return
 
