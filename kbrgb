@@ -121,6 +121,8 @@ EFFECTS = {
     "battery":   (6.0, 0, 0.15),
     "typewriter": (1.0, 1, 0.04),
     "keyflash":  (1.0, 1, 0.03),
+    "wpmheat":   (1.0, 0, 0.06),
+    "zen":       (30.0, 1, 0.06),
     "prism":     (3.0, 0, 0.06),
     "glitch":    (1.0, 1, 0.05),
     "eruption":  (1.0, 0, 0.07),
@@ -712,6 +714,31 @@ def fx_keyflash(t, p, cols, st):
     return [dim(cols[0], 0.15 + 0.85 * z[i]) for i in range(4)]
 
 
+def fx_wpmheat(t, p, cols, st):
+    """Typing speed as heat: idle blue, red around 8 keys/s."""
+    now = st.get("now", 0.0)
+    kps = sum(1 for ts, _ in st.get("keys", ()) if now - ts < 3.0) / 3.0
+    ema = st["ema"] = 0.85 * st.get("ema", 0.0) + 0.15 * kps
+    frac = min(1.0, ema / 8.0)
+    bri = 0.30 + 0.70 * min(1.0, ema / 4.0)
+    return [dim(hsv(0.60 * (1.0 - frac)), bri)] * 4
+
+
+def fx_zen(t, p, cols, st):
+    """Static color that sleeps when you do: fades out after p idle
+    seconds (default 30, set with -s), any key wakes it instantly."""
+    if "t0" not in st:
+        st["t0"] = st.get("now", 0.0)
+    idle = st.get("now", 0.0) - st.get("last_key", st["t0"])
+    env = st.get("env", 1.0)
+    if idle < p:
+        env = min(1.0, env + 0.5)      # near-instant wake
+    else:
+        env = max(0.0, env - 0.03)     # ~2 s fade at dt 0.06
+    st["env"] = env
+    return [dim(cols[0], env)] * 4
+
+
 FX_FUNCS = {
     "breathe": fx_breathe, "rainbow": fx_rainbow, "wave": fx_wave,
     "snake": fx_snake, "meteor": fx_meteor, "police": fx_police,
@@ -724,6 +751,7 @@ FX_FUNCS = {
     "glitch": fx_glitch, "eruption": fx_eruption, "redalert": fx_redalert,
     "supernova": fx_supernova, "shockwave": fx_shockwave,
     "typewriter": fx_typewriter, "keyflash": fx_keyflash,
+    "wpmheat": fx_wpmheat, "zen": fx_zen,
 }
 
 
