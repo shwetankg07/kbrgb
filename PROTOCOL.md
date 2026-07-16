@@ -134,8 +134,10 @@ A `0x02` static write cleanly reclaims control from any native effect
   above don't need it). A HID capture from Windows PredatorSense would
   settle what it does.
 - **Direction coverage**: byte 5 is confirmed on `0x07` (both machines)
-  and confirmed ignored on `0x09`. Which other effects are direction-aware
-  (meteor `0x0a` looks like the obvious candidate) is untested.
+  and confirmed ignored on `0x09`. Meteor `0x0a` was A/B'd on the
+  PHN16S-71 but the result is inconclusive by symmetry: its motion
+  bounces both ways, so a reversed run looks identical to a normal one.
+  No other effect has a visible direction to test against.
 - **GET report**: reading feature report `0xa4` back (state query) untested.
 - Byte 10 semantics unknown; mode bytes above `0x0c` unprobed (deliberately).
 - Whether the 0–100 brightness and `0x0f` behavior are common to all
