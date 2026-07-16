@@ -77,9 +77,9 @@ ZONES = [0x01, 0x02, 0x04, 0x08]
 ZONE_ALL = 0x0F
 
 # EC-native onboard effects: one feature report, hardware loops it forever.
-# Mode byte mapped by abduvaliy-hbai (DAMX PR #213) on a Nitro ANV16S-41;
-# names follow what a PHN16S-71 shows, which differs from his labels for
-# 0x07/0x09 (see PROTOCOL.md). Hostile bytes deliberately unreachable:
+# Mode byte mapped by abduvaliy-hbai (DAMX PR #213) on a Nitro ANV16S-41,
+# confirmed identical on the PHN16S-71 after his 0x07/0x09 retest (see
+# PROTOCOL.md). Hostile bytes deliberately unreachable:
 # 0x01/0x03 off, 0x06 flash, 0x08 glitchy, 0x0c freezes the lighting.
 NATIVE = {              # name: (mode byte, respects the RGB bytes)
     "breathe": (0x04, True),

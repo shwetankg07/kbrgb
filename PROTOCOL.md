@@ -53,16 +53,17 @@ Confirmed safe values, as observed on both machines tested:
 | `0x02` | static | static | used |
 | `0x04` | breathing | breathing fade | used |
 | `0x05` | neon | all zones cycle the color wheel together | ignored |
-| `0x07` | shifting / slide | **the boot rainbow wave**, flowing across zones | ignored |
-| `0x09` | wave | **center-out bounce that cycles hue** (closest to PredatorSense "Zoom") | ignored |
+| `0x07` | wave / shifting | **the boot rainbow wave**, flowing across zones | ignored |
+| `0x09` | zoom | **center-out bounce that cycles hue** (PredatorSense "Zoom") | ignored |
 | `0x0a` | meteor (snake-like) | snake-like sweep | used |
 | `0x0b` | twinkling (random) | random sparkle | used |
 
-Note the `0x07`/`0x09` rows: the two machines' reports describe them
-differently (possibly firmware variance, possibly just how the same motion
-reads on a 4-zone strip). Map by observed behavior on your model, not by
-name. Interesting consequence: `0x09` may be the "Zoom" byte that PR #213
-couldn't find — on the PHN16S-71 it is unmistakably a center-out pulse.
+The `0x07`/`0x09` labels initially disagreed between the two machines'
+reports. abduvaliy-hbai retested both bytes on the ANV16S-41 (DAMX PR #213
+thread, 2026-07-15) and confirmed they behave the same on both models —
+his earlier `0x09 = wave` was a visual misclassification. So: `0x07` is
+the wave/shifting slide, `0x09` is the center-out zoom, consistently, and
+`0x09` is indeed the "Zoom" byte PR #213 originally couldn't find.
 
 **Hostile values — do not send:**
 
@@ -74,9 +75,13 @@ couldn't find — on the PHN16S-71 it is unmistakably a center-out pulse.
 | `0x0c` | freezes the current lighting until another effect is written |
 
 Speed byte: PR #213 used `0..9` for breathing/neon and `1..10` for the
-rest; `4`–`5` verified mid-speed on the PHN16S-71. Direction byte: values
-`1` and `2` looked identical in PR #213's testing and ours — either the
-firmware ignores it or direction lives in an unidentified byte.
+rest; `4`–`5` verified mid-speed on the PHN16S-71. Direction byte: it
+works, but only for effects that have a direction. `0x07` honors it
+(`direction=1` wave left→right, `direction=2` right→left) while `0x09`
+ignores it (zoom has no direction to reverse) — found by abduvaliy-hbai
+on the ANV16S-41, reproduced on the PHN16S-71, so it holds on both
+machines tested. Earlier "byte 5 is inert" observations came from testing
+it against directionless effects.
 
 A `0x02` static write cleanly reclaims control from any native effect
 (verified) — that is also the safe way out if you ever hit `0x0c`.
@@ -128,11 +133,9 @@ A `0x02` static write cleanly reclaims control from any native effect
   `AcerECKeyboardController.dll` remains unexplored (the native effects
   above don't need it). A HID capture from Windows PredatorSense would
   settle what it does.
-- **`0x07` vs `0x09`**: do these effects genuinely differ between the
-  ANV16S-41 and PHN16S-71 firmwares, or do the same animations just read
-  differently to different eyes? A video from each model would settle it.
-- **Direction**: byte 5 appears inert. Is direction encoded elsewhere, or
-  unsupported by this EC generation?
+- **Direction coverage**: byte 5 is confirmed on `0x07` (both machines)
+  and confirmed ignored on `0x09`. Which other effects are direction-aware
+  (meteor `0x0a` looks like the obvious candidate) is untested.
 - **GET report**: reading feature report `0xa4` back (state query) untested.
 - Byte 10 semantics unknown; mode bytes above `0x0c` unprobed (deliberately).
 - Whether the 0–100 brightness and `0x0f` behavior are common to all
