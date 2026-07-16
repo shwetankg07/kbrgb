@@ -78,18 +78,38 @@ install everything runs as your normal user.
 |---|---|---|---|
 | `breathe [C]` | `snake [C]` | `storm` | `cpuheat`, a CPU temp gauge |
 | `aurora` | `meteor [C]` | `eruption` | `battery`, a live charge bar |
-| `ocean` | `wave` | `supernova` | |
-| `lava` | `duel [C1 C2]` | `redalert [C]` | |
-| `candle` | `shadow [C]` | `shockwave [C]` | |
-| `ripple [C]` | `chase [C]` | `glitch [C]` | |
+| `ocean` | `wave` | `supernova` | `load`, CPU left / GPU right |
+| `lava` | `duel [C1 C2]` | `redalert [C]` | `netpulse`, live network meter |
+| `candle` | `shadow [C]` | `shockwave [C]` | `clock`, hue follows the time |
+| `ripple [C]` | `chase [C]` | `glitch [C]` | `pomo [MIN]`, pomodoro timer |
 | `heartbeat [C]` | `rainbow` | `police [C1 C2]` | |
 | `prism` | | `disco` / `sparkle [C..]` | |
 | | | `matrix` / `fire` / `strobe [C]` | |
+
+And five that react to your typing:
+
+| Reactive | What it does |
+|---|---|
+| `typewriter [C]` | every keystroke glows the whole board, decays back |
+| `keyflash [C]` | the zone under each key flashes and spills sideways |
+| `wpmheat [WPM]` | typing speed as color: idle blue to red at your ceiling (default 96 WPM) |
+| `zen [C]` | static color that fades out after `-s` idle seconds; any key wakes it |
+| `flow [WPM]` | wpmheat + zen combined: speed heat that falls asleep when you do |
 
 Flags: `-b N` for brightness (0 to 100), `-s N` for the cycle period in
 seconds. Colors are optional RRGGBB hex. When you don't give any, effects
 pull colors from the active [omarchy](https://omarchy.org) theme if there is
 one, with sane fallbacks otherwise.
+
+### Reactive effects and privacy
+
+The reactive effects read key events from `/dev/input`, which requires your
+user to be in the `input` group (`sudo usermod -aG input $USER`, then log
+out and back in). Keycodes are used in-memory for timing and zone math
+only — nothing is ever stored, logged, or sent anywhere. If you run keyd or
+kmonad, events are read from the remapper's virtual keyboard, so these
+effects keep working there too. `load` reads the NVIDIA dGPU only while
+it's already awake — it will never wake a suspended card (or hang on one).
 
 These are software effects: a tiny daemon streams frames to the controller
 (~14 per second, the chip handles far more without complaint). They survive
@@ -99,7 +119,9 @@ If you'd rather have the hardware do the work, `kbrgb native
 breathe|neon|wave|zoom|meteor|twinkle [C]` switches the EC to one of its
 builtin animations. Single write, zero CPU afterwards. `neon`, `wave` and
 `zoom` are hardware color cycles and ignore the color argument, and for
-natives `-s` means the EC speed, 0 to 10. `kbrgb native list` prints the map.
+natives `-s` means the EC speed, 0 to 10, and `-r` reverses the wave
+(the direction byte only means something there). `kbrgb native list`
+prints the map.
 
 Other commands you'll actually use:
 
