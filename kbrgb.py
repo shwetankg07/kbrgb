@@ -81,7 +81,7 @@ when available, with built-in fallbacks otherwise.
 import fcntl, glob, math, os, random, re, select, signal, struct, sys, time
 from collections import deque
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # NOTE (verified on PHN16S-71 hardware, two machines):
 # - brightness byte range is 0-100 (predator-sense shipped the same fix
@@ -177,6 +177,23 @@ DEFAULT_COLORS = {
 
 def die(msg):
     sys.exit(f"kbrgb: {msg}")
+
+
+def _sudo_self():
+    """How to spell this program inside a 'sudo ...' hint.
+
+    pipx and `pip install --user` land the entry point in ~/.local/bin, which
+    sudo's secure_path deliberately excludes, so telling those users to run
+    'sudo kbrgb' hands them a command-not-found. Only suggest the bare name
+    when we are somewhere root's PATH actually looks.
+    """
+    import shlex
+
+    me = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
+    if not me or os.path.dirname(me) in (
+            "/usr/bin", "/usr/local/bin", "/usr/sbin", "/usr/local/sbin"):
+        return "kbrgb"
+    return shlex.quote(me)
 
 
 def find_dev():
@@ -278,8 +295,9 @@ def open_dev():
         return open(dev, "rb+", buffering=0)
     except PermissionError:
         die(f"no access to {dev}. The udev rule is probably missing: run "
-            "'sudo kbrgb install-udev' (distro packages ship it already), "
-            "then replug or reboot. Running kbrgb with sudo also works.")
+            f"'sudo {_sudo_self()} install-udev' (distro packages ship it "
+            "already), then replug or reboot. Running kbrgb with sudo also "
+            "works.")
 
 
 def cmd_install_udev(args):
@@ -294,7 +312,7 @@ def cmd_install_udev(args):
         die("usage: kbrgb install-udev [--print]")
     if os.geteuid() != 0:
         die("install-udev writes to /etc/udev/rules.d, so it needs root: "
-            "sudo kbrgb install-udev")
+            f"sudo {_sudo_self()} install-udev")
 
     dest = os.path.join("/etc/udev/rules.d", UDEV_RULE_NAME)
     try:

@@ -3,6 +3,11 @@
 Every registry keys off a GitHub release tag, so cut that first and fan out
 from it. Run these from a clean checkout of `main`.
 
+**Currently published: the AUR and PyPI.** Section 5 (COPR) is written and the
+recipe should work, but nothing has been uploaded there and the spec has never
+been built. `packaging/rpm/kbrgb.spec` is kept because it costs nothing to
+carry and means Fedora is one build away if a user ever asks for it.
+
 ## 0. One time setup
 
 **AUR.** Make an account at <https://aur.archlinux.org>, add your SSH public

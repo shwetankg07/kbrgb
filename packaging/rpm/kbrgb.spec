@@ -1,5 +1,5 @@
 Name:           kbrgb
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        RGB keyboard control for Acer Predator/Nitro laptops (ENE KB5130)
 
@@ -47,6 +47,10 @@ chmod 644 %{buildroot}%{_udevrulesdir}/60-kbrgb-enek5130.rules
 %{_udevrulesdir}/60-kbrgb-enek5130.rules
 
 %changelog
+* Sat Jul 25 2026 Shwetank Gupta <shwetankg07@gmail.com> - 0.2.1-1
+- Suggest an absolute path in sudo hints, so they work for pip/pipx installs
+  where the entry point sits outside sudo's secure_path
+
 * Sat Jul 25 2026 Shwetank Gupta <shwetankg07@gmail.com> - 0.2.0-1
 - First packaged release: adds --version, `kbrgb install-udev`, and the
   AUR/PyPI/COPR packaging

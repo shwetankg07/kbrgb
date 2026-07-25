@@ -39,7 +39,7 @@ trigger the EC's builtin effects directly.
 
 Along the way this repo picked up some protocol findings of its own, all
 verified on real hardware (details and packet layout in
-[PROTOCOL.md](PROTOCOL.md)):
+[PROTOCOL.md](https://github.com/shwetankg07/kbrgb/blob/main/PROTOCOL.md)):
 
 1. The brightness byte goes 0 to 100 on this EC revision, not 1 to 15 like
    older tools assumed. A tool sending 15 as "max" is quietly running your
@@ -67,24 +67,19 @@ verified on real hardware (details and packet layout in
 yay -S kbrgb           # or kbrgb-git to track main
 ```
 
-**Fedora** (COPR):
-
-```bash
-sudo dnf copr enable shwetankg07/kbrgb
-sudo dnf install kbrgb
-```
-
 **Anywhere else** (pip):
 
 ```bash
-pipx install kbrgb     # or: uv tool install kbrgb
-sudo kbrgb install-udev
+pipx install kbrgb                        # or: uv tool install kbrgb
+sudo "$(command -v kbrgb)" install-udev
 ```
 
-pip cannot write a udev rule, so that second command lays it down for you.
-The distro packages ship it already and you can skip it there.
+pip cannot write a udev rule, so that second command lays it down. The
+`$(command -v kbrgb)` is not decoration: pipx installs into `~/.local/bin`,
+which sudo's `secure_path` excludes, so a bare `sudo kbrgb` would not be
+found.
 
-**From source:**
+**From source** (any distro, needs Python 3.11+ and nothing else):
 
 ```bash
 git clone https://github.com/shwetankg07/kbrgb
@@ -93,10 +88,10 @@ sudo ./install.sh      # installs kbrgb to /usr/local/bin + udev rule
 kbrgb rainbow          # no sudo needed after install
 ```
 
-Needs Python 3.11+ and nothing else, no pip packages. The bundled udev rule
-grants device access to whoever is at the keyboard (`uaccess`), so after
-install everything runs as your normal user. If the keyboard still wants sudo
-right after installing, replug it or reboot once so the rule takes effect.
+All three paths get you the udev rule, which grants device access to whoever
+is at the keyboard (`uaccess`), so everything runs as your normal user.
+If the keyboard still wants sudo right after installing, replug it or reboot
+once so the rule takes effect.
 
 ## Effects
 
@@ -174,8 +169,14 @@ Nothing happens at all: check the chip is there,
 grep -l ENEK5130 /sys/class/hidraw/*/device/uevent
 ```
 
-and that the udev rule landed (`ls /etc/udev/rules.d/ | grep kbrgb`), or just
-try once with sudo to rule out permissions.
+and that the udev rule landed. Packages put it in `/usr/lib/udev/rules.d`,
+`install.sh` and `install-udev` put it in `/etc/udev/rules.d`, so check both:
+
+```bash
+ls /usr/lib/udev/rules.d /etc/udev/rules.d | grep kbrgb
+```
+
+Or just try once with sudo to rule out permissions.
 
 ## DAMX integration
 
@@ -230,5 +231,5 @@ useful things right now:
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The protocol facts belong to the community that
+MIT, see [LICENSE](https://github.com/shwetankg07/kbrgb/blob/main/LICENSE). The protocol facts belong to the community that
 dug them up. This repo just tries to write them down properly.
