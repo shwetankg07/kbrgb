@@ -70,12 +70,15 @@ Tools:
   kbrgb probe                   guided hardware diagnostic — run this to
                                 report support for a new laptop model
   kbrgb status                  show device, saved state, daemon state
+  kbrgb --version               print the version
 
 Colors are RRGGBB hex. Effect defaults come from the active omarchy theme
 when available, with built-in fallbacks otherwise.
 """
 import fcntl, glob, math, os, random, re, select, signal, struct, sys, time
 from collections import deque
+
+__version__ = "0.1.0"
 
 # NOTE (verified on PHN16S-71 hardware, two machines):
 # - brightness byte range is 0-100 (predator-sense shipped the same fix
@@ -1124,6 +1127,10 @@ def cmd_probe():
 
 def main():
     args = sys.argv[1:]
+    if args and args[0] in ("-V", "--version"):
+        print(f"kbrgb {__version__}")
+        return
+
     restoring = args == ["restore"]
     if restoring:
         try:
