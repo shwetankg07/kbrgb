@@ -71,6 +71,9 @@ Tools:
                                 report support for a new laptop model
   kbrgb status                  show device, saved state, daemon state
   kbrgb --version               print the version
+  kbrgb install-udev            install the udev rule (needs sudo; only
+                                pip/pipx installs need this, distro
+                                packages ship it)
 
 Colors are RRGGBB hex. Effect defaults come from the active omarchy theme
 when available, with built-in fallbacks otherwise.
@@ -78,7 +81,7 @@ when available, with built-in fallbacks otherwise.
 import fcntl, glob, math, os, random, re, select, signal, struct, sys, time
 from collections import deque
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # NOTE (verified on PHN16S-71 hardware, two machines):
 # - brightness byte range is 0-100 (predator-sense shipped the same fix
@@ -105,6 +108,18 @@ NATIVE = {              # name: (mode byte, respects the RGB bytes)
     "meteor":  (0x0A, True),
     "twinkle": (0x0B, True),
 }
+# udev rule that hands device access to whoever is at the keyboard. Numbered
+# below 70 so the uaccess TAG is set before systemd's uaccess builtin runs
+# (73-seat-late.rules); otherwise the ACL granting the logged-in user their
+# access is never applied and kbrgb needs sudo. This lives here, not in a
+# data file, because `pipx install kbrgb` ships only this module: keeping one
+# copy means the rule cannot drift between the distro packages and pip.
+UDEV_RULE_NAME = "60-kbrgb-enek5130.rules"
+UDEV_RULE = """\
+# ENE KB5130 i2c-HID keyboard RGB controller (Acer Predator/Nitro)
+KERNEL=="hidraw*", SUBSYSTEMS=="hid", ATTRS{modalias}=="hid:b0018g*v00000CF2p00005130", MODE="0660", TAG+="uaccess"
+"""
+
 THEME = os.path.expanduser("~/.config/omarchy/current/theme")
 STATE = os.path.expanduser("~/.local/state/kbrgb/last")
 PIDFILE = os.path.expanduser("~/.local/state/kbrgb/fx.pid")
@@ -262,7 +277,52 @@ def open_dev():
     try:
         return open(dev, "rb+", buffering=0)
     except PermissionError:
-        die(f"no access to {dev} — udev rule missing? (or run with sudo)")
+        die(f"no access to {dev}. The udev rule is probably missing: run "
+            "'sudo kbrgb install-udev' (distro packages ship it already), "
+            "then replug or reboot. Running kbrgb with sudo also works.")
+
+
+def cmd_install_udev(args):
+    """Lay down the udev rule. Only pip/pipx installs need this; the AUR and
+    RPM packages ship the same rule in /usr/lib/udev/rules.d."""
+    import subprocess
+
+    if args == ["--print"]:      # used by the packaging recipes at build time
+        sys.stdout.write(UDEV_RULE)
+        return
+    if args:
+        die("usage: kbrgb install-udev [--print]")
+    if os.geteuid() != 0:
+        die("install-udev writes to /etc/udev/rules.d, so it needs root: "
+            "sudo kbrgb install-udev")
+
+    dest = os.path.join("/etc/udev/rules.d", UDEV_RULE_NAME)
+    try:
+        with open(dest, "w") as f:
+            f.write(UDEV_RULE)
+        os.chmod(dest, 0o644)
+    except OSError as e:
+        die(f"could not write {dest}: {e}")
+
+    old = "/etc/udev/rules.d/99-kbrgb-enek5130.rules"   # pre-0.x rule name
+    if os.path.exists(old):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+    for cmd in (["udevadm", "control", "--reload-rules"], ["udevadm", "trigger"]):
+        try:
+            ok = subprocess.run(cmd, timeout=10).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+        if not ok:
+            print(f"kbrgb: warning: '{' '.join(cmd)}' failed. The rule is "
+                  "written; replug or reboot to apply it.", file=sys.stderr)
+            break
+
+    print(f"installed {dest}")
+    print("if the keyboard still needs sudo, replug it or reboot once.")
 
 
 def send(fd, mask, r, g, b, bri=100, mode=0x02, speed=0, direction=0):
@@ -1166,6 +1226,9 @@ def main():
         return
     if args == ["status"]:
         cmd_status()
+        return
+    if args[0] == "install-udev":
+        cmd_install_udev(args[1:])
         return
     if args == ["demo"]:
         cmd_demo()

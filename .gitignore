@@ -1,2 +1,11 @@
 __pycache__/
 *.pyc
+
+# packaging build output
+dist/
+build/
+*.egg-info/
+*.pkg.tar.zst
+*.src.rpm
+src/
+pkg/

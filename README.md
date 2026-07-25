@@ -61,6 +61,31 @@ verified on real hardware (details and packet layout in
 
 ## Install
 
+**Arch, CachyOS, EndeavourOS, omarchy** (AUR):
+
+```bash
+yay -S kbrgb           # or kbrgb-git to track main
+```
+
+**Fedora** (COPR):
+
+```bash
+sudo dnf copr enable shwetankg07/kbrgb
+sudo dnf install kbrgb
+```
+
+**Anywhere else** (pip):
+
+```bash
+pipx install kbrgb     # or: uv tool install kbrgb
+sudo kbrgb install-udev
+```
+
+pip cannot write a udev rule, so that second command lays it down for you.
+The distro packages ship it already and you can skip it there.
+
+**From source:**
+
 ```bash
 git clone https://github.com/shwetankg07/kbrgb
 cd kbrgb
@@ -70,7 +95,8 @@ kbrgb rainbow          # no sudo needed after install
 
 Needs Python 3.11+ and nothing else, no pip packages. The bundled udev rule
 grants device access to whoever is at the keyboard (`uaccess`), so after
-install everything runs as your normal user.
+install everything runs as your normal user. If the keyboard still wants sudo
+right after installing, replug it or reboot once so the rule takes effect.
 
 ## Effects
 

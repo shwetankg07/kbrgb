@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kbrgb"
+dynamic = ["version"]
+description = "RGB keyboard control for Acer Predator and Nitro laptops with the ENE KB5130 (ENEK5130) i2c-HID controller"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shwetank Gupta" }]
+keywords = ["acer", "predator", "nitro", "keyboard", "rgb", "hidraw", "enek5130", "linux"]
+dependencies = []
+
+# Linux only and hardware specific: this drives a hidraw device directly.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Hardware",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/shwetankg07/kbrgb"
+Source = "https://github.com/shwetankg07/kbrgb"
+Issues = "https://github.com/shwetankg07/kbrgb/issues"
+Protocol = "https://github.com/shwetankg07/kbrgb/blob/main/PROTOCOL.md"
+
+[project.scripts]
+kbrgb = "kbrgb:main"
+
+[tool.hatch.version]
+path = "kbrgb.py"
+
+[tool.hatch.build.targets.wheel]
+# Single module, so name it explicitly rather than relying on auto-detection.
+only-include = ["kbrgb.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "kbrgb.py",
+    "install.sh",
+    "examples/",
+    "packaging/",
+    "README.md",
+    "PROTOCOL.md",
+    "RELEASING.md",
+    "LICENSE",
+]
