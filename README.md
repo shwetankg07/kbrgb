@@ -69,7 +69,7 @@ yay -S kbrgb           # or kbrgb-git to track main
 
 If it works out, an [AUR vote](https://aur.archlinux.org/packages/kbrgb) is the
 one thing that helps the next Acer owner find this: AUR search ranks by votes and
-popularity, and this package currently sits at zero on both.
+popularity.
 
 **Anywhere else** (pip):
 
