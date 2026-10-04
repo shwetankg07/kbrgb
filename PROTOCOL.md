@@ -33,7 +33,7 @@ models very welcome — open an issue.
 | 10 | `0x00` | unknown |
 
 Bytes 2/4/5 were documented here as "unknown, constant" until
-[abduvaliy-hbai](https://github.com/abduvaliy-hbai) mapped them while working
+[abduvaliy-engineer](https://github.com/abduvaliy-engineer) mapped them while working
 on [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213):
 byte 2 selects the effect (`0x02` just means "static"), byte 4 is the speed,
 byte 5 is a direction field. The native effects section below is documented
@@ -48,7 +48,7 @@ host-side frame streaming.
 
 Confirmed safe values, as observed on both machines tested:
 
-| mode | ANV16S-41 (abduvaliy-hbai) | PHN16S-71 (this repo) | RGB bytes |
+| mode | ANV16S-41 (abduvaliy-engineer) | PHN16S-71 (this repo) | RGB bytes |
 |---|---|---|---|
 | `0x02` | static | static | used |
 | `0x04` | breathing | breathing fade | used |
@@ -59,7 +59,7 @@ Confirmed safe values, as observed on both machines tested:
 | `0x0b` | twinkling (random) | random sparkle | used |
 
 The `0x07`/`0x09` labels initially disagreed between the two machines'
-reports. abduvaliy-hbai retested both bytes on the ANV16S-41 (DAMX PR #213
+reports. abduvaliy-engineer retested both bytes on the ANV16S-41 (DAMX PR #213
 thread, 2026-07-15) and confirmed they behave the same on both models —
 his earlier `0x09 = wave` was a visual misclassification. So: `0x07` is
 the wave/shifting slide, `0x09` is the center-out zoom, consistently, and
@@ -78,7 +78,7 @@ Speed byte: PR #213 used `0..9` for breathing/neon and `1..10` for the
 rest; `4`–`5` verified mid-speed on the PHN16S-71. Direction byte: it
 works, but only for effects that have a direction. `0x07` honors it
 (`direction=1` wave left→right, `direction=2` right→left) while `0x09`
-ignores it (zoom has no direction to reverse) — found by abduvaliy-hbai
+ignores it (zoom has no direction to reverse) — found by abduvaliy-engineer
 on the ANV16S-41, reproduced on the PHN16S-71, so it holds on both
 machines tested. Earlier "byte 5 is inert" observations came from testing
 it against directionless effects.
