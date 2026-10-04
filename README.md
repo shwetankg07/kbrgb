@@ -54,7 +54,7 @@ verified on real hardware (details and packet layout in
 4. The EC's native effects are triggerable. Byte 2 of the packet, which
    everyone had written down as "unknown, constant 0x02", is actually the
    effect selector. Discovered by
-   [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in
+   [abduvaliy-engineer](https://github.com/abduvaliy-engineer) in
    [DAMX PR #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213),
    confirmed here on a PHN16S-71. One write and the hardware animates by
    itself, zero CPU.
@@ -195,7 +195,7 @@ Stop any kbrgb effect (`kbrgb off`) before driving colors from DAMX.
 | Model | Status |
 |---|---|
 | Predator Helios Neo 16S AI (PHN16S-71) | ✅ confirmed (developed here + independent probe report) |
-| Nitro ANV16S-41 | ✅ confirmed three times: `kbrgb probe` report by [abduvaliy-hbai](https://github.com/abduvaliy-hbai) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213), plus two independent users (CachyOS daily driver + another) in [acer-predator-turbo#287](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module/issues/287) |
+| Nitro ANV16S-41 | ✅ confirmed three times: `kbrgb probe` report by [abduvaliy-engineer](https://github.com/abduvaliy-engineer) in [DAMX #213](https://github.com/PXDiv/Div-Acer-Manager-Max/pull/213), plus two independent users (CachyOS daily driver + another) in [acer-predator-turbo#287](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module/issues/287) |
 | Nitro 16S AI (AN16S-61) | 🤞 same chip, the whole A1-A4 protocol independently re-derived and hardware-verified by [ArnarValur](https://github.com/ArnarValur) in [predator-sense#31](https://github.com/cleyton1986/predator-sense/issues/31), including raw A3 dumps. kbrgb itself untested there, report back if you try it |
 | Predator Helios Neo 16 (PHN16-73) | 🤞 same chip, static HID confirmed per predator-sense findings |
 | Anything with `ENEK5130` in `/sys/class/hidraw/*/device/uevent` | probably. Please test and report! |
